@@ -47,8 +47,28 @@ It creates the event through Protect's store, so notifications, the call screen,
 the thumbnail and the ring chip all work. It needs a normal login session
 (`POST /api/auth/login` with matching `Origin`/`Referer` headers, then the
 returned CSRF token and cookie); an Integration API key is rejected. Use a
-dedicated local Protect user with only the access it needs. The proxy looks the
-camera up by its MAC, so nothing is hard-coded.
+dedicated local Protect user (see below). The proxy looks the camera up by its
+MAC, so nothing is hard-coded.
+
+### The Protect user
+
+The account is configuration, not code: the proxy only reads
+`--protect-ring-user` / `--protect-ring-password`, and without them it logs
+"not ringing Protect" and carries on (events and talk still work, only the ring
+is skipped). It should not be an admin. What it needs:
+
+- A **local** UniFi OS account (username and password). The proxy performs a
+  plain `/api/auth/login`, so cloud/SSO logins and MFA are not supported.
+- **Protect access with write permission on the camera it rings for.** Protect's
+  handler for the route above requires write on the camera (or the permission to
+  edit device settings), and the camera must be adopted. Nothing else is
+  needed: a user with write on only the doorbell also sees only that camera,
+  which is all the proxy needs to find its own camera by MAC. (Read from
+  Protect's code; verified with a user scoped to a single camera.)
+- Permissions are granted per camera id, so a camera that is removed and
+  re-adopted gets a new id and the user must be granted it again.
+- Give each deployment its own credentials (for example from a Kubernetes
+  secret). The proxy reads them at start, so restart it after rotating them.
 
 ## Two-way audio
 
