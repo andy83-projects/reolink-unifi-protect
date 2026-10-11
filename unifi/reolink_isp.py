@@ -7,7 +7,8 @@ Mapping (Protect 0-100 sliders to Reolink 0-255, where 50 is the 128 midpoint):
 
 * brightness/contrast/saturation/hue/sharpness -> ``SetImage``
 * denoise -> ``nr3d`` (on above 0), mirror -> ``mirroring``, flip -> ``rotation``
-* wdr -> ``hdr`` on cameras that have it (doorbells); otherwise ``backLight``
+* wdr -> ``hdr`` on cameras that have it (doorbells): Protect low = Reolink Auto
+  (2), middle and high = On (1), off = Off (0); otherwise ``backLight``
   ``DynamicRangeControl`` with ``drc`` set from the level, or ``Off`` at 0
 """
 
@@ -25,6 +26,8 @@ IMAGE_FIELDS = {
     "sharpness": "sharpen",
 }
 HANDLED = {*IMAGE_FIELDS, "denoise", "mirror", "flip", "wdr"}
+# Reolink HDR is off/on/auto, so Protect's levels fold: low=auto, middle/high=on.
+HDR_BY_WDR = {0: 0, 1: 2, 2: 1, 3: 1}
 # Protect's WDR levels are 0 (off) to 3; spread them over the DRC range.
 WDR_DRC_LEVELS = {1: 85, 2: 170, 3: 255}
 
@@ -55,7 +58,7 @@ def plan_changes(
     if "wdr" in options:
         level = max(0, min(3, int(options["wdr"])))
         if isp is not None and "hdr" in isp:
-            out["hdr"] = 1 if level else 0
+            out["hdr"] = HDR_BY_WDR[level]
         elif level:
             out["backLight"] = "DynamicRangeControl"
             out["drc"] = WDR_DRC_LEVELS[level]
