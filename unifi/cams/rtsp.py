@@ -11,6 +11,7 @@ import aiohttp
 from aiohttp import web
 
 from unifi.cams.base import SmartDetectObjectType, UnifiCamBase
+from unifi.reolink_isp import ReolinkIsp
 
 
 class RTSPCam(UnifiCamBase):
@@ -112,6 +113,12 @@ class RTSPCam(UnifiCamBase):
             action="store_true",
             help="Drive AI detections (person/vehicle/animal) from Baichuan push"
             " instead of polling GetAiState; implies the push connection",
+        )
+        parser.add_argument(
+            "--reolink-isp",
+            action="store_true",
+            help="Write Protect's image settings (brightness, contrast, WDR, ...)"
+            " to the camera when they change (needs --reolink-ai-host)",
         )
         parser.add_argument(
             "--reolink-visitor-poll",
@@ -550,6 +557,25 @@ class RTSPCam(UnifiCamBase):
             # what Protect asks for. Never touches screen.jpg, which the
             # snapshot-stream path uses as its source instead.
             fetched.unlink(missing_ok=True)
+
+    async def get_video_settings(self) -> dict:
+        # Protect owns these values: echo back what it last set, never the camera's.
+        return dict(getattr(self, "_isp_state", {}))
+
+    async def change_video_settings(self, options) -> None:
+        if not (getattr(self.args, "reolink_isp", False) and self.args.reolink_ai_host):
+            return
+        if not hasattr(self, "_isp"):
+            self._isp = ReolinkIsp(
+                self.args.reolink_ai_host,
+                self.args.reolink_ai_user,
+                self.args.reolink_ai_password,
+                self.logger,
+            )
+            self._isp_state = {}
+        self._isp_state.update(options)
+        # Reply to Protect now; the camera writes can take seconds.
+        self._isp_task = asyncio.create_task(self._isp.apply(dict(options)))
 
     async def _push_reolink(self) -> None:
         from reolink_aio.api import Host
