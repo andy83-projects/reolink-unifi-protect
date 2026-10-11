@@ -23,8 +23,13 @@ def test_image_sliders_scale():
 
 
 def test_wdr_uses_hdr_on_cameras_that_have_it():
-    assert plan_changes({"wdr": 2}, {"hdr": 0})[1] == {"hdr": 1}
-    assert plan_changes({"wdr": 0}, {"hdr": 1})[1] == {"hdr": 0}
+    # off -> Off, low -> Auto, middle/high -> On
+    assert [plan_changes({"wdr": w}, {"hdr": 0})[1]["hdr"] for w in range(4)] == [
+        0,
+        2,
+        1,
+        1,
+    ]
 
 
 def test_wdr_uses_drc_otherwise():
@@ -66,7 +71,7 @@ def sent(cam, cmd):
 
 def test_apply_writes_image_and_merged_isp():
     cam = FakeCam({"channel": 0, "hdr": 0, "blc": 128})
-    asyncio.run(cam.apply({"brightness": 100, "wdr": 1, "aeMode": "auto"}))
+    asyncio.run(cam.apply({"brightness": 100, "wdr": 2, "aeMode": "auto"}))
     assert sent(cam, "SetImage")[0]["param"]["Image"] == {"channel": 0, "bright": 255}
     assert sent(cam, "SetIsp")[0]["param"]["Isp"] == {
         "channel": 0,
