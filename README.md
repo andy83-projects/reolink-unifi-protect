@@ -104,7 +104,22 @@ adoption token in `.env`, and `docker compose up -d --force-recreate`.
 | `--ai-min-confidence`, `--ai-confidence-overrides` | Confidence gates, globally and per class (e.g. `animal=0.6`) |
 | `--ai-min-movement` | Suppresses detections that never move (kills "the house across the street is a person") |
 | `--ai-classes` | Class priority when picking an event type |
+| `--reolink-push-ai` | Drive person/vehicle/animal detections from the camera's own Baichuan push channel (port 9000) instead of polling `GetAiState`; no HTTPS calls to the camera |
+| `--reolink-push-button` | Doorbell button press from the same push connection (see [docs/DOORBELL.md](docs/DOORBELL.md)) |
+| `--doorbell` | Advertise the camera to Protect as a doorbell |
+| `--protect-ring-user/-password` | A local Protect user the proxy logs in as to raise a real ring on a button press |
+| `--speaker`, `--talkback-bridge` | Two-way audio: Protect's talk audio is converted to G.711 and played on the camera speaker over an ONVIF RTSP backchannel |
+| `--reolink-visitor-poll` | Fallback: poll `GetEvents` for the button instead of using push |
 | `--snapshot-url` | Snapshot via the camera's HTTP(S) API instead of a fourth RTSP session (Reolink WiFi cameras limit concurrent RTSP) |
+
+## Doorbells, push events and two-way audio
+
+Reolink doorbells work as first-party Protect doorbells: a press raises a real
+ring (notification, call screen, thumbnail), talk audio plays on the doorbell,
+and AI events arrive over the camera's push channel rather than by polling its
+web server. One image serves both doorbells and plain cameras; the behaviour is
+chosen with flags. Details, and the Protect internals they rest on, are in
+[`docs/DOORBELL.md`](docs/DOORBELL.md).
 
 ## Protocol notes
 

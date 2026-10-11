@@ -35,6 +35,8 @@ class RTSPCam(UnifiCamBase):
         self._ai_track_seq = 0
         self._ai_active_lead = None
         self._ai_class_state: dict = {}
+        self._ai_active = None
+        self._ai_last_event_ts = 0.0
         self.stream_source = dict()
         for i, stream_index in enumerate(["video1", "video2", "video3"]):
             if not i < len(self.args.source):
@@ -83,6 +85,50 @@ class RTSPCam(UnifiCamBase):
             default=1.0,
             type=float,
             help="Seconds between GetAiState polls",
+        )
+        parser.add_argument(
+            "--doorbell",
+            action="store_true",
+            help="Advertise the camera as a doorbell (featureFlags.doorbell)",
+        )
+        parser.add_argument(
+            "--speaker",
+            action="store_true",
+            help="Advertise hasSpeaker and log Protect's talkback audio (experiment)",
+        )
+        parser.add_argument(
+            "--talkback-bridge",
+            action="store_true",
+            help="Play Protect's talkback audio on the camera speaker (needs --speaker)",
+        )
+        parser.add_argument(
+            "--reolink-push-button",
+            action="store_true",
+            help="Detect the doorbell button from Baichuan push (port 9000, no HTTPS)"
+            " instead of polling GetEvents",
+        )
+        parser.add_argument(
+            "--reolink-push-ai",
+            action="store_true",
+            help="Drive AI detections (person/vehicle/animal) from Baichuan push"
+            " instead of polling GetAiState; implies the push connection",
+        )
+        parser.add_argument(
+            "--reolink-visitor-poll",
+            action="store_true",
+            help="Poll GetEvents on --reolink-ai-host for doorbell button presses",
+        )
+        parser.add_argument(
+            "--protect-ring-user",
+            default=None,
+            help="Local Protect user used to log in and ring on a button press",
+        )
+        parser.add_argument("--protect-ring-password", default=None)
+        parser.add_argument(
+            "--reolink-visitor-interval",
+            default=1.0,
+            type=float,
+            help="Seconds between GetEvents visitor polls",
         )
         # Receives real detection BOXES from the nodelink-js sidecar
         # (deploy/ai-sidecar), which decodes the camera's own AI
@@ -189,8 +235,19 @@ class RTSPCam(UnifiCamBase):
             await self.sink_runner.setup()
             await web.TCPSite(self.sink_runner, port=self.args.ai_sink_port).start()
 
-        if self.args.reolink_ai_host:
+        if self.args.reolink_ai_host and self.args.reolink_visitor_poll:
+            self._visitor_task = asyncio.create_task(self._poll_reolink_visitor())
+        if self.args.reolink_ai_host and (
+            self.args.reolink_push_button or self.args.reolink_push_ai
+        ):
+            self._push_task = asyncio.create_task(self._push_reolink())
+
+        if self.args.reolink_ai_host and not self.args.reolink_push_ai:
             await self._poll_reolink_ai()
+        elif getattr(self, "_push_task", None):
+            await self._push_task
+        elif getattr(self, "_visitor_task", None):
+            await self._visitor_task
 
     async def _handle_detections(self, request) -> web.Response:
         try:
@@ -493,6 +550,165 @@ class RTSPCam(UnifiCamBase):
             # what Protect asks for. Never touches screen.jpg, which the
             # snapshot-stream path uses as its source instead.
             fetched.unlink(missing_ok=True)
+
+    async def _push_reolink(self) -> None:
+        from reolink_aio.api import Host
+
+        # Never gives up: retries with a doubling cool-off (min..max), reset only after
+        # the connection has stayed up for `stable` seconds so a flapping camera is not
+        # hammered. Knobs are attributes so tests can shrink them.
+        min_delay = getattr(self, "_push_min_delay", 2.0)
+        max_delay = getattr(self, "_push_max_delay", 120.0)
+        stable = getattr(self, "_push_stable_after", 300.0)
+        poll = getattr(self, "_push_watch_interval", 30.0)
+        lost_limit = getattr(self, "_push_lost_limit", 120.0)
+        loop = asyncio.get_running_loop()
+        delay = min_delay
+        while True:
+            host = None
+            connected_at = None
+            reason = "connection ended"
+            try:
+                host = Host(
+                    self.args.reolink_ai_host,
+                    self.args.reolink_ai_user,
+                    self.args.reolink_ai_password,
+                    bc_only=True,
+                )
+                state = {"pressed": False}
+                if self.args.reolink_push_ai:
+                    # The library only tracks AI states for keys that already exist
+                    # (normally created by its HTTP startup, which we skip on purpose).
+                    # Pinned to reolink-aio 0.21.18: revisit if it is upgraded.
+                    host._ai_detection_states[0] = {
+                        "people": False,
+                        "vehicle": False,
+                        "dog_cat": False,
+                    }
+
+                def on_event(host=host, state=state) -> None:
+                    if self.args.reolink_push_button:
+                        now_pressed = bool(host.visitor_detected(0))
+                        if now_pressed and not state["pressed"]:
+                            loop.call_soon_threadsafe(
+                                lambda: asyncio.ensure_future(self.trigger_ring())
+                            )
+                        state["pressed"] = now_pressed
+                    if self.args.reolink_push_ai:
+                        states = {
+                            k: bool(host.ai_detected(0, k))
+                            for k in ("people", "vehicle", "dog_cat")
+                        }
+                        loop.call_soon_threadsafe(
+                            lambda: asyncio.ensure_future(self._apply_ai_states(states))
+                        )
+
+                await host.baichuan.login()
+                host.baichuan.register_callback(
+                    "unifi-cam-proxy", on_event, cmd_id=33, channel=0
+                )
+                await host.baichuan.subscribe_events()
+                connected_at = time.time()
+                self.logger.info(
+                    f"Baichuan push connected to {self.args.reolink_ai_host}"
+                    f" (button={self.args.reolink_push_button},"
+                    f" ai={self.args.reolink_push_ai})"
+                )
+                lost_since = None
+                while True:
+                    await asyncio.sleep(poll)
+                    await self._expire_stale_ai()
+                    if host.baichuan.session_active:
+                        lost_since = None
+                    else:
+                        lost_since = lost_since or time.time()
+                        if time.time() - lost_since > lost_limit:
+                            raise RuntimeError(f"session lost for >{lost_limit:.0f}s")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                reason = repr(e)
+            finally:
+                try:
+                    if host is not None:
+                        await host.baichuan.logout()
+                except Exception:
+                    pass
+            await self._apply_ai_states({}, force_clear=True)
+            if connected_at is not None and time.time() - connected_at >= stable:
+                delay = min_delay
+            self.logger.warning(
+                f"Baichuan push down ({reason}); retrying in {delay:.0f}s"
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, max_delay)
+
+    async def _apply_ai_states(self, states: dict, force_clear: bool = False) -> None:
+        # Same decision as _poll_reolink_ai, fed by Baichuan push instead of GetAiState.
+        classes = [
+            ("people", SmartDetectObjectType.PERSON),
+            ("vehicle", SmartDetectObjectType.VEHICLE),
+            ("dog_cat", SmartDetectObjectType.ANIMAL),
+        ]
+        now = time.time()
+        self._ai_last_event_ts = now
+        desired = None
+        if not force_clear:
+            for key, object_type in classes:
+                if (
+                    self.smart_detect_enabled is not None
+                    and object_type.value not in self.smart_detect_enabled
+                ):
+                    continue
+                if states.get(key):
+                    self._ai_class_state[object_type.value] = now
+                    if desired is None:
+                        desired = object_type
+        if time.time() - self._sink_last_ts < 10:
+            self._ai_active = None  # the box sidecar drives events while it is alive
+        elif desired and self._ai_active is None:
+            self.logger.info(f"Reolink AI (push): {desired.value} detected")
+            await self.trigger_motion_start(desired)
+            self._ai_active = desired
+        elif desired is None and self._ai_active is not None:
+            self.logger.info("Reolink AI (push): clear")
+            await self.trigger_motion_stop()
+            self._ai_active = None
+
+    async def _expire_stale_ai(self) -> None:
+        # Safety net: if the push goes quiet mid-event, never leave motion stuck on.
+        if self._ai_active is not None and time.time() - self._ai_last_event_ts > 90:
+            self.logger.warning("Reolink AI (push): no events for 90s, clearing")
+            await self._apply_ai_states({}, force_clear=True)
+
+    async def _poll_reolink_visitor(self) -> None:
+        url = (
+            f"https://{self.args.reolink_ai_host}/cgi-bin/api.cgi"
+            f"?cmd=GetEvents&channel=0&user={self.args.reolink_ai_user}"
+            f"&password={self.args.reolink_ai_password}"
+        )
+        self.logger.info(
+            f"Polling Reolink doorbell button on {self.args.reolink_ai_host}"
+            f" every {self.args.reolink_visitor_interval}s"
+        )
+        pressed = False
+        async with aiohttp.ClientSession() as session:
+            while True:
+                try:
+                    async with session.get(
+                        url, ssl=False, timeout=aiohttp.ClientTimeout(total=5)
+                    ) as resp:
+                        data = await resp.json(content_type=None)
+                    entry = (data[0].get("value", {}) or {}).get("visitor") or {}
+                    now_pressed = bool(entry.get("alarm_state"))
+                    if now_pressed and not pressed:
+                        await self.trigger_ring()
+                    pressed = now_pressed
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    self.logger.warning(f"Reolink visitor poll failed: {e}")
+                await asyncio.sleep(self.args.reolink_visitor_interval)
 
     async def _poll_reolink_ai(self) -> None:
         url = (
