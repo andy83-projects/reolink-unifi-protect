@@ -11,3 +11,4 @@ uiprotect
 reolinkapi
 websockets>=9.0.1,<13
 xmltodict
+reolink-aio==0.21.18

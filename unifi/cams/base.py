@@ -282,7 +282,7 @@ class UnifiCamBase(metaclass=ABCMeta):
         codecs = ["h264"]
         if getattr(self.args, "hi_codec", "h264") == "h265":
             codecs.append("h265")
-        return {
+        flags = {
             "mic": 1,
             "aec": [],
             "videoMode": ["default"],
@@ -302,7 +302,7 @@ class UnifiCamBase(metaclass=ABCMeta):
             "hasHdr": False,
             "hasWdr": True,
             "hasMic": True,
-            "hasSpeaker": False,
+            "hasSpeaker": bool(getattr(self.args, "speaker", False)),
             "hasInfrared": False,
             "hasMotionZones": True,
             "hasPrivacyMask": False,
@@ -315,6 +315,93 @@ class UnifiCamBase(metaclass=ABCMeta):
             "maxScaleDownLevel": 2,
             "downScaleResolutions": [[3840, 2160], [2688, 1512], [1920, 1080]],
         }
+        if getattr(self.args, "doorbell", False):
+            # Protect shows doorbell UI off featureFlags.doorbell
+            flags["doorbell"] = True
+        if getattr(self.args, "speaker", False):
+            # Protect maps hasSpeaker from the camera's short `speaker` key
+            flags["speaker"] = True
+        return flags
+
+    async def _protect_login(self, session: "aiohttp.ClientSession") -> Optional[str]:
+        base = f"https://{self.args.host}"
+        async with session.post(
+            f"{base}/api/auth/login",
+            headers={"Origin": base, "Referer": base + "/"},
+            json={
+                "username": self.args.protect_ring_user,
+                "password": self.args.protect_ring_password,
+                "rememberMe": False,
+            },
+            ssl=False,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Protect login failed: HTTP {resp.status}")
+            return resp.headers.get("X-CSRF-Token") or resp.headers.get(
+                "X-Updated-CSRF-Token"
+            )
+
+    async def trigger_ring(self) -> None:
+        # Protect has no camera->NVR ring message; a real ring (push, call
+        # screen, thumbnail, chip) comes from the Access doorbell endpoint,
+        # which needs a normal login session (an Integration API key gets 401).
+        self.logger.info("Doorbell button press detected")
+        user = getattr(self.args, "protect_ring_user", None)
+        if not user or not getattr(self.args, "protect_ring_password", None):
+            self.logger.info("No --protect-ring-user/password; not ringing Protect")
+            return
+        now = time.time()
+        if now - getattr(self, "_last_ring_ts", 0) < 10:
+            return
+        self._last_ring_ts = now
+        base = f"https://{self.args.host}"
+        mac = self.args.mac.replace(":", "").upper()
+        jar = aiohttp.CookieJar(unsafe=True)
+        try:
+            async with aiohttp.ClientSession(cookie_jar=jar) as session:
+                for attempt in (1, 2):
+                    csrf = await self._protect_login(session)
+                    headers = {"Origin": base, "Referer": base + "/"}
+                    if csrf:
+                        headers["X-CSRF-Token"] = csrf
+                    async with session.get(
+                        f"{base}/proxy/protect/api/cameras",
+                        headers=headers,
+                        ssl=False,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        cams = await resp.json(content_type=None)
+                    cam = next(
+                        (
+                            c
+                            for c in cams
+                            if str(c.get("mac", "")).replace(":", "").upper() == mac
+                        ),
+                        None,
+                    )
+                    if not cam:
+                        self.logger.warning(f"Camera {mac} not found in Protect")
+                        return
+                    start = int(now * 1000)
+                    async with session.post(
+                        f"{base}/proxy/protect/api/events/access/action",
+                        headers=headers,
+                        json={
+                            "action": "door_bell",
+                            "camera_id": cam["id"],
+                            "start_time": start,
+                            "end_time": start + 3000,
+                        },
+                        ssl=False,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status in (401, 403) and attempt == 1:
+                            continue
+                        self.logger.info(f"Rang Protect: HTTP {resp.status}")
+                        return
+        except Exception as e:
+            self.logger.warning(f"Ringing Protect failed: {e}")
 
     # API for subclasses
     async def trigger_motion_start(
@@ -637,7 +724,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                     "lensmodel": self.args.model,
                     "cameraName": self.args.name,
                     "isGen5s": True,
-                    "isDoorbellSeries": False,
+                    "isDoorbellSeries": bool(getattr(self.args, "doorbell", False)),
                 }
             )
         await self.send(self.gen_response("ubnt_avclient_hello", payload=payload))
@@ -1405,6 +1492,8 @@ class UnifiCamBase(metaclass=ABCMeta):
             res = await self.process_network_status(m)
         elif fn == "AnalyticsTest":
             res = self.gen_response("AnalyticsTest", response_to=m["messageId"])
+        elif fn == "ChangeTalkbackSettings":
+            res = await self.process_talkback_settings(m)
         elif fn == "ChangeSoundLedSettings":
             res = await self.process_sound_led_settings(m)
         elif fn == "ChangeIspSettings":
@@ -1439,6 +1528,61 @@ class UnifiCamBase(metaclass=ABCMeta):
             await self.send(res)
 
         return False
+
+    async def process_talkback_settings(self, m: dict[str, Any]) -> AVClientResponse:
+        payload = m.get("payload") or {}
+        self.logger.info(f"ChangeTalkbackSettings payload: {json.dumps(payload)}")
+        if getattr(self.args, "speaker", False):
+            port = int(payload.get("bindPort") or 7004)
+            await self._start_talkback_listener(port)
+        return self.gen_response(
+            "ChangeTalkbackSettings", response_to=m["messageId"], payload=payload
+        )
+
+    async def _start_talkback_listener(self, port: int) -> None:
+        if getattr(self, "_talkback_transport", None):
+            return
+        logger = self.logger
+        bridge = None
+        if getattr(self.args, "talkback_bridge", False) and getattr(
+            self.args, "reolink_ai_host", None
+        ):
+            from unifi.talkback import TalkbackBridge
+
+            bridge = TalkbackBridge(
+                f"rtsp://{self.args.reolink_ai_host}:554/h264Preview_01_main",
+                self.args.reolink_ai_user,
+                self.args.reolink_ai_password,
+                logger,
+            )
+            logger.info("Talkback bridge enabled (AAC -> G.711 -> ONVIF backchannel)")
+
+        class _Probe(asyncio.DatagramProtocol):
+            count = 0
+
+            def datagram_received(self, data: bytes, addr) -> None:
+                _Probe.count += 1
+                if bridge:
+                    bridge.feed(data)
+                if _Probe.count <= 20 or _Probe.count % 200 == 0:
+                    hdr = ""
+                    if len(data) >= 12:
+                        hdr = (
+                            f" rtp v={data[0] >> 6} pt={data[1] & 0x7F}"
+                            f" seq={int.from_bytes(data[2:4], 'big')}"
+                            f" ts={int.from_bytes(data[4:8], 'big')}"
+                            f" ssrc={int.from_bytes(data[8:12], 'big'):08x}"
+                        )
+                    logger.info(
+                        f"talkback udp #{_Probe.count} from {addr[0]}:{addr[1]}"
+                        f" len={len(data)}{hdr} head={data[:16].hex()}"
+                    )
+
+        loop = asyncio.get_running_loop()
+        self._talkback_transport, _ = await loop.create_datagram_endpoint(
+            _Probe, local_addr=("0.0.0.0", port)
+        )
+        self.logger.info(f"Talkback UDP listener on 0.0.0.0:{port}")
 
     def get_base_ffmpeg_args(self, stream_index: str = "") -> str:
         # No -use_wallclock_as_timestamps: stamping packets with network

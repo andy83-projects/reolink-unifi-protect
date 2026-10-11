@@ -104,7 +104,22 @@ adoption token in `.env`, and `docker compose up -d --force-recreate`.
 | `--ai-min-confidence`, `--ai-confidence-overrides` | Confidence gates, globally and per class (e.g. `animal=0.6`) |
 | `--ai-min-movement` | Suppresses detections that never move (kills "the house across the street is a person") |
 | `--ai-classes` | Class priority when picking an event type |
+| `--reolink-push-ai` | Drive person/vehicle/animal detections from the camera's own Baichuan push channel (port 9000) instead of polling `GetAiState`; no HTTPS calls to the camera |
+| `--reolink-push-button` | Doorbell button press from the same push connection (see [docs/DOORBELL.md](docs/DOORBELL.md)) |
+| `--doorbell` | Advertise the camera to Protect as a doorbell |
+| `--protect-ring-user/-password` | A local Protect user the proxy logs in as to raise a real ring on a button press |
+| `--speaker`, `--talkback-bridge` | Two-way audio: Protect's talk audio is converted to G.711 and played on the camera speaker over an ONVIF RTSP backchannel |
+| `--reolink-visitor-poll` | Fallback: poll `GetEvents` for the button instead of using push |
 | `--snapshot-url` | Snapshot via the camera's HTTP(S) API instead of a fourth RTSP session (Reolink WiFi cameras limit concurrent RTSP) |
+
+## Doorbells, push events and two-way audio
+
+Reolink doorbells work as first-party Protect doorbells: a press raises a real
+ring (notification, call screen, thumbnail), talk audio plays on the doorbell,
+and AI events arrive over the camera's push channel rather than by polling its
+web server. One image serves both doorbells and plain cameras; the behaviour is
+chosen with flags. Details, and the Protect internals they rest on, are in
+[`docs/DOORBELL.md`](docs/DOORBELL.md).
 
 ## Protocol notes
 
@@ -129,6 +144,13 @@ smart-detection bridge is currently wired into the `rtsp` source.
 
 ## Credits
 
+This repository is a fork of
+[woutersteegers/reolink-unifi-protect](https://github.com/woutersteegers/reolink-unifi-protect)
+(itself a fork of keshavdv/unifi-cam-proxy). All of the camera emulation, codec
+and Baichuan work that this builds on is theirs; please star and credit the
+originals. The doorbell, push-event and talkback additions were written by
+andy83-projects together with Claude (Anthropic).
+
 - [keshavdv/unifi-cam-proxy](https://github.com/keshavdv/unifi-cam-proxy) —
   the foundation this fork builds on (MIT).
 - [apocaliss92/nodelink-js](https://github.com/apocaliss92/nodelink-js) —
@@ -141,4 +163,5 @@ smart-detection bridge is currently wired into the `rtsp` source.
 ## License
 
 MIT — see [LICENSE](LICENSE). Original work © 2023 Keshav Varma;
-modifications © 2026 Wouter Steegers.
+modifications © 2026 Wouter Steegers;
+further modifications © 2026 andy83-projects.
