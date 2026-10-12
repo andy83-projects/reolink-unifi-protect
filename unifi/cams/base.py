@@ -60,7 +60,13 @@ class UnifiCamBase(metaclass=ABCMeta):
         self.smart_detect_enabled: Optional[set] = None
         self.smart_detect_zones: Optional[dict] = None
         self.smart_exclude_zones: Optional[dict] = None
-        self._motion_event_id: int = 0
+        # Seeded from wall-clock time, not 0: Protect appears to key dedup/
+        # ordering on this id per camera and never resets its own high-water
+        # mark, so restarting a proxy process at 0 makes every event look
+        # already-seen and Protect silently stops recording motion/smart-
+        # detect events from that camera until the id climbs back above
+        # wherever it left off.
+        self._motion_event_id: int = int(time.time())
         self._motion_event_ts: Optional[float] = None
         self._motion_object_type: Optional[SmartDetectObjectType] = None
         self._ffmpeg_handles: dict[str, subprocess.Popen] = {}
