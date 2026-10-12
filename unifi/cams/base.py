@@ -450,9 +450,9 @@ class UnifiCamBase(metaclass=ABCMeta):
                     descriptors = [
                         self.build_smart_descriptor(
                             object_type.value,
-                            [250, 250, 500, 500],
+                            self.SYNTHETIC_BOX,
                             0.9,
-                            (self._motion_event_id + 1) * 100,
+                            self.synthetic_tracker_id(),
                         )
                     ]
                 payload.update(
@@ -521,6 +521,13 @@ class UnifiCamBase(metaclass=ABCMeta):
     # the frame fails ds's typed parse and is relayed to Protect, which
     # rejects it as "not expected over avclient".
     SMART_ZONE_LEVEL = 80
+
+    # Centred box (Protect's 0-1000 [x, y, w, h] space) used when a detection
+    # has no coordinates of its own, e.g. the camera's push events.
+    SYNTHETIC_BOX = [250, 250, 500, 500]
+
+    def synthetic_tracker_id(self) -> int:
+        return (self._motion_event_id + 1) * 100
 
     def build_smart_descriptor(
         self,
@@ -612,7 +619,11 @@ class UnifiCamBase(metaclass=ABCMeta):
                 if self._smart_snapshots:
                     payload["smartDetectSnapshots"] = list(self._smart_snapshots)
                     payload["trackerIDAttrMap"] = {
-                        str(entry["trackerID"]): {} for entry in self._smart_snapshots
+                        str(entry["trackerID"]): {
+                            "objectType": entry["smartDetectSnapshotType"],
+                            "zone": [1],
+                        }
+                        for entry in self._smart_snapshots
                     }
                     self.logger.info(
                         "Announcing object crops: "
