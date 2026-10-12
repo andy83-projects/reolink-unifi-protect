@@ -10,30 +10,7 @@ from typing import Optional
 import aiohttp
 from aiohttp import web
 
-from unifi.cams.base import SmartDetectObjectType, UnifiCamBase
-
-
-def jpeg_size(path: Path) -> Optional[tuple[int, int]]:
-    """(width, height) from a JPEG's start-of-frame marker, or None if unreadable."""
-    try:
-        data = path.read_bytes()[:65536]
-    except OSError:
-        return None
-    i = 2
-    while i + 9 < len(data):
-        if data[i] != 0xFF:
-            i += 1
-            continue
-        marker = data[i + 1]
-        if marker == 0xFF:
-            i += 1
-            continue
-        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
-            height = int.from_bytes(data[i + 5 : i + 7], "big")
-            width = int.from_bytes(data[i + 7 : i + 9], "big")
-            return (width, height) if width and height else None
-        i += 2 + int.from_bytes(data[i + 2 : i + 4], "big")
-    return None
+from unifi.cams.base import SmartDetectObjectType, UnifiCamBase, jpeg_size
 
 
 class RTSPCam(UnifiCamBase):
