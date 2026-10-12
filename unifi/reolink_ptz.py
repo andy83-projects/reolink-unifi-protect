@@ -119,13 +119,12 @@ class ReolinkPtz:
         )
         self._token = res[0]["value"]["Token"]["name"]
 
-    async def _ptz_ctrl(self, param: dict[str, Any]) -> bool:
+    async def _api(self, cmd: str, param: dict[str, Any]) -> bool:
         for attempt in (0, 1):
             if self._token is None:
                 await self._login()
             res = await self._post(
-                f"token={self._token}",
-                [{"cmd": "PtzCtrl", "param": {"channel": self.channel, **param}}],
+                f"token={self._token}", [{"cmd": cmd, "param": param}]
             )
             r = res[0]
             # rspCode -6 / -7 mean the token is no longer valid; any other failure
@@ -138,6 +137,10 @@ class ReolinkPtz:
                 self._token = None
                 continue
             return r.get("code") == 0
+        return False
+
+    async def _ptz_ctrl(self, param: dict[str, Any]) -> bool:
+        return await self._api("PtzCtrl", {"channel": self.channel, **param})
 
     async def goto_preset(self, preset_id: int, speed: int = 32) -> bool:
         """Drive the camera to one of its own saved presets (Reolink ``ToPos``).
@@ -158,6 +161,34 @@ class ReolinkPtz:
             except Exception as exc:  # noqa: BLE001
                 self._token = None
                 self.logger.warning("Could not go to preset %s: %s", preset_id, exc)
+                return False
+
+    async def save_preset(self, preset_id: int, name: str = "Home View") -> bool:
+        """Store the camera's current position as preset ``preset_id`` (``SetPtzPreset``).
+
+        Overwrites whatever that preset held. Never raises.
+        """
+        async with self._lock:
+            try:
+                ok = await self._api(
+                    "SetPtzPreset",
+                    {
+                        "PtzPreset": {
+                            "channel": self.channel,
+                            "enable": 1,
+                            "id": preset_id,
+                            "name": name,
+                        }
+                    },
+                )
+                if ok:
+                    self.logger.info("Reolink PTZ saved preset %s", preset_id)
+                else:
+                    self.logger.warning("Reolink PTZ rejected saving %s", preset_id)
+                return ok
+            except Exception as exc:  # noqa: BLE001
+                self._token = None
+                self.logger.warning("Could not save preset %s: %s", preset_id, exc)
                 return False
 
     async def continuous_move(self, x: int, y: int, z: int) -> None:

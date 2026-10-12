@@ -71,6 +71,14 @@ on a Reolink E1 Zoom:
   message with `action: go, index: -1`; the proxy drives the camera to its own
   preset (`--ptz-home-preset`, default 0, the camera's "default") with `PtzCtrl ToPos`.
   Setting the home preset in Protect does not move the camera.
+- **Setting a new Home View** (`--ptz-set-home`): Protect's "Set Home View" button
+  (`POST /cameras/:id/ptz/home`) reads `GetCurrentPosition` and then sends `Preset`
+  with `action: set, index: -1`. Because Reolink has no position readback, the
+  position in that message is the fixed origin, so the proxy ignores it and instead
+  stores the camera's *current* position in the `--ptz-home-preset` slot with
+  `SetPtzPreset` (this overwrites that preset). Protect sends the same `set` once
+  when it first meets a PTZ camera, to create its default home view, so a `set`
+  within 90 s of the proxy starting is ignored. Not yet verified on hardware.
 
 ## Real detection boxes (`--ai-sidecar`)
 

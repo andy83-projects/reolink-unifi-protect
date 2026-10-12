@@ -75,5 +75,6 @@ Every option of the `rtsp` source, generated from the argument parser. **New** m
 |---|---|---|---|
 | `--ptz` | off | **New** | Advertise a pan/tilt/zoom camera so Protect shows its PTZ controls |
 | `--ptz-home-preset` | `0` | **New** | Reolink preset id the camera returns to for Protect's Home View (0 is the camera's 'default' preset) |
+| `--ptz-set-home` | off | **New** | Let Protect's 'Set Home View' store the camera's current position in the --ptz-home-preset slot (overwrites that preset) |
 | `--reolink-isp` | off | **New** | Write Protect's image settings (brightness, contrast, WDR, ...) to the camera when they change (needs --reolink-ai-host) |
 | `--reolink-reboot` | off | **New** | Reboot the Reolink camera when Protect's restart camera is used (needs --reolink-ai-host) |

@@ -160,7 +160,7 @@ The full, generated list is in [docs/FLAGS.md](docs/FLAGS.md); the main ones are
 | `--reolink-visitor-poll` | Fallback: poll `GetEvents` for the button instead of using push |
 | `--ai-sidecar`, `--ai-sidecar-profile`, `--ai-sidecar-always-on` | Run the bundled Baichuan box sidecar: events carry the camera's real moving detection boxes and per-object crops. On-demand by default (stream open only during detections). See [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
 | `--snapshot-url` | Snapshot via the camera's HTTP(S) API instead of a fourth RTSP session (Reolink WiFi cameras limit concurrent RTSP) |
-| `--ptz`, `--ptz-home-preset` | Advertise a pan/tilt/zoom camera so Protect shows its joystick; drive the Reolink from Protect's controls and map Home View to a camera preset (see [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md)) |
+| `--ptz`, `--ptz-home-preset`, `--ptz-set-home` | Advertise a pan/tilt/zoom camera so Protect shows its joystick; drive the Reolink from Protect's controls and map Home View to a camera preset, and optionally let Protect's Set Home View save the camera's current position there (see [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md)) |
 | `--reolink-isp` | Write Protect's image settings (brightness, contrast, WDR, ...) to the camera when they change |
 | `--reolink-reboot` | Reboot the Reolink camera when Protect's restart camera is used |
 
