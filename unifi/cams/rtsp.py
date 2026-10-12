@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import os
 import subprocess
 import tempfile
 import time
@@ -168,6 +169,31 @@ class RTSPCam(UnifiCamBase):
             help="Port to receive AI box reports from the sidecar",
         )
         parser.add_argument(
+            "--ai-sidecar",
+            action="store_true",
+            help="Run the bundled Baichuan box sidecar (Node, in the image) so events"
+            " carry the camera's real moving detection boxes and per-object crops."
+            " Needs --reolink-ai-host; the standby replica never starts it",
+        )
+        parser.add_argument(
+            "--ai-sidecar-profile",
+            default="main",
+            choices=["main", "sub"],
+            help="Baichuan stream the boxes are read from. Doorbells carry them on"
+            " the main stream only",
+        )
+        parser.add_argument(
+            "--ai-sidecar-always-on",
+            action="store_true",
+            help="Keep the sidecar's stream open continuously (about 4.5 Mbit/s for"
+            " a doorbell's main stream) instead of only during detections",
+        )
+        parser.add_argument(
+            "--ai-sidecar-path",
+            default="/opt/ai-sidecar/index.mjs",
+            help="Where the sidecar script lives in the image",
+        )
+        parser.add_argument(
             "--ai-min-confidence",
             default=0.75,
             type=float,
@@ -254,13 +280,25 @@ class RTSPCam(UnifiCamBase):
             site = web.TCPSite(self.runner, port=self.args.http_api)
             await site.start()
 
+        bundled_sidecar = bool(
+            getattr(self.args, "ai_sidecar", False) and self.args.reolink_ai_host
+        )
+        if bundled_sidecar and not self.args.ai_sink_port:
+            self.args.ai_sink_port = self.SIDECAR_SINK_PORT
         if self.args.ai_sink_port:
             self.logger.info(f"AI box sink listening on {self.args.ai_sink_port}")
             sink = web.Application()
             sink.add_routes([web.post("/detections", self._handle_detections)])
+            sink.add_routes([web.get("/state", self._handle_sidecar_state)])
             self.sink_runner = web.AppRunner(sink)
             await self.sink_runner.setup()
-            await web.TCPSite(self.sink_runner, port=self.args.ai_sink_port).start()
+            # The bundled sidecar is in this container: keep the sink off the pod network.
+            host = "127.0.0.1" if bundled_sidecar else None
+            await web.TCPSite(
+                self.sink_runner, host=host, port=self.args.ai_sink_port
+            ).start()
+        if bundled_sidecar:
+            self._sidecar_task = asyncio.create_task(self._supervise_sidecar())
 
         if self.args.reolink_ai_host and self.args.reolink_visitor_poll:
             self._visitor_task = asyncio.create_task(self._poll_reolink_visitor())
@@ -275,6 +313,84 @@ class RTSPCam(UnifiCamBase):
             await self._push_task
         elif getattr(self, "_visitor_task", None):
             await self._visitor_task
+
+    # Loopback port the bundled sidecar reports to when --ai-sink-port is not given.
+    SIDECAR_SINK_PORT = 8099
+
+    async def _handle_sidecar_state(self, request) -> web.Response:
+        # The sidecar opens its (expensive) camera stream only while this is true.
+        active = (
+            getattr(self, "_ai_active", None) is not None
+            or getattr(self, "_motion_event_ts", None) is not None
+        )
+        return web.json_response({"active": active})
+
+    def _sidecar_env(self) -> dict:
+        env = dict(os.environ)
+        env.update(
+            {
+                "CAM_IP": str(self.args.reolink_ai_host),
+                "CAM_USER": str(self.args.reolink_ai_user),
+                "CAM_PASS": str(self.args.reolink_ai_password),
+                "SINK_URL": f"http://127.0.0.1:{self.args.ai_sink_port}/detections",
+                "PROFILE": self.args.ai_sidecar_profile,
+            }
+        )
+        if not self.args.ai_sidecar_always_on:
+            env["STATE_URL"] = f"http://127.0.0.1:{self.args.ai_sink_port}/state"
+        return env
+
+    def _log_sidecar_line(self, line: str) -> None:
+        if (
+            line.startswith(
+                ("baichuan login", "stream on", "stream off", "sink post failed")
+            )
+            or "session ended" in line
+        ):
+            self.logger.info(f"AI sidecar: {line}")
+        else:
+            self.logger.debug(f"AI sidecar: {line}")
+
+    async def _supervise_sidecar(self) -> None:
+        # Never takes the proxy down: if node is missing or the sidecar keeps dying, events
+        # simply keep coming from the push channel.
+        delay = 5.0
+        while True:
+            started = time.monotonic()
+            proc = None
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "node",
+                    self.args.ai_sidecar_path,
+                    env=self._sidecar_env(),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                self.logger.info(f"AI sidecar started (pid {proc.pid})")
+                async for raw in proc.stdout:
+                    self._log_sidecar_line(raw.decode(errors="replace").rstrip())
+                self.logger.warning(f"AI sidecar exited (rc={await proc.wait()})")
+            except asyncio.CancelledError:
+                if proc is not None and proc.returncode is None:
+                    proc.terminate()
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(f"AI sidecar could not run: {exc}")
+            if time.monotonic() - started > 60:
+                delay = 5.0
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60.0)
+
+    def _drop_placeholder_crop(self) -> None:
+        """Real boxes supersede the centred placeholder crop the push start made."""
+        tid = self.synthetic_tracker_id()
+        kept = [e for e in self._smart_snapshots if e["trackerID"] != tid]
+        if len(kept) == len(self._smart_snapshots):
+            return
+        self._smart_snapshots = kept
+        path = self._smart_snapshot_files.pop(f"detect_{tid}.jpg", None)
+        if path is not None:
+            path.unlink(missing_ok=True)
 
     async def _handle_detections(self, request) -> web.Response:
         try:
@@ -445,6 +561,7 @@ class RTSPCam(UnifiCamBase):
             )
         if descriptors:
             self._sink_last_boxes_ts = time.time()
+            self._drop_placeholder_crop()
             present = {d["objectType"] for d in descriptors}
             lead = next(t for t in priority if t in present)
             detail = ", ".join(
@@ -929,6 +1046,9 @@ class RTSPCam(UnifiCamBase):
             await self.runner.cleanup()
         if self.sink_runner:
             await self.sink_runner.cleanup()
+        sidecar = getattr(self, "_sidecar_task", None)
+        if sidecar is not None:
+            sidecar.cancel()  # the supervisor terminates the node process
         ptz = getattr(self, "_ptz", None)
         if ptz is not None:
             await ptz.close()  # reopened lazily if this instance is reused
