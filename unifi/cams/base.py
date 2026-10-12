@@ -28,6 +28,29 @@ from unifi.core import RetryableError
 AVClientRequest = AVClientResponse = dict[str, Any]
 
 
+def jpeg_size(path: Path) -> Optional[tuple[int, int]]:
+    """(width, height) from a JPEG's start-of-frame marker, or None if unreadable."""
+    try:
+        data = path.read_bytes()[:65536]
+    except OSError:
+        return None
+    i = 2
+    while i + 9 < len(data):
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if marker == 0xFF:
+            i += 1
+            continue
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            height = int.from_bytes(data[i + 5 : i + 7], "big")
+            width = int.from_bytes(data[i + 7 : i + 9], "big")
+            return (width, height) if width and height else None
+        i += 2 + int.from_bytes(data[i + 2 : i + 4], "big")
+    return None
+
+
 class SmartDetectObjectType(Enum):
     PERSON = "person"
     VEHICLE = "vehicle"
@@ -616,6 +639,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                         "descriptors": [],
                     }
                 )
+                payload.update(self._stage_full_fov())
                 if self._smart_snapshots:
                     payload["smartDetectSnapshots"] = list(self._smart_snapshots)
                     payload["trackerIDAttrMap"] = {
@@ -665,6 +689,32 @@ class UnifiCamBase(metaclass=ABCMeta):
     # this only needs to outlive a slow NVR, not a long event: crops
     # belonging to the event still in progress are never pruned.
     CROP_RETENTION_SEC = 600
+
+    def _stage_full_fov(self) -> dict[str, Any]:
+        """Announce the event's full frame like real cameras do.
+
+        Their leave frame names a full-field-of-view jpeg plus its size; ds then
+        asks for it and stores thumbnailFullfovId. Without it only the per-object
+        crop exists and the event card has no wide view.
+        """
+        src = self._motion_snapshot
+        if not src or not src.exists():
+            return {}
+        fname = f"fullfov_{self._motion_event_id}.jpg"
+        # Same pruned directory as the per-object crops, not the temp root.
+        dst = Path(getattr(self, "snapshot_dir", None) or src.parent, fname)
+        try:
+            shutil.copyfile(src, dst)
+        except OSError:
+            return {}
+        self._smart_snapshot_files[fname] = dst
+        self.prune_stale_crops()
+        width, height = jpeg_size(dst) or (0, 0)
+        return {
+            "smartDetectSnapshotFullFoV": fname,
+            "smartDetectSnapshotFullFoVHeight": height,
+            "smartDetectSnapshotFullFoVWidth": width,
+        }
 
     def prune_stale_crops(self) -> None:
         cutoff = time.time() - self.CROP_RETENTION_SEC

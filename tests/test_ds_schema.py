@@ -130,3 +130,16 @@ def test_handshake_mac_is_the_canonical_12_hex_form(cert):
     core = Core(args, camera=None, logger=logging.getLogger("test"))
     # ds looks the camera up by this header; Protect stores it without colons.
     assert core._headers()["camera-mac"] == "024A5FB13B03"
+
+
+async def test_leave_frame_announces_a_servable_full_fov_image(cam):
+    # Real cameras name a full-frame jpeg + its size in the leave frame; ds then asks
+    # for it and stores thumbnailFullfovId. Without it the event has no wide view.
+    await cam.trigger_motion_start(SmartDetectObjectType.PERSON)
+    await cam.trigger_motion_stop()
+    leave = [m["payload"] for m in cam.sent if m["payload"]["edgeType"] == "leave"][0]
+    name = leave["smartDetectSnapshotFullFoV"]
+    assert name in cam._smart_snapshot_files
+    assert cam._smart_snapshot_files[name].exists()
+    assert "smartDetectSnapshotFullFoVWidth" in leave
+    assert "smartDetectSnapshotFullFoVHeight" in leave
