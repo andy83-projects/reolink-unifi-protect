@@ -25,8 +25,9 @@ DEADZONE = 20
 MIN_SPEED = 1
 # Reolink's own ceiling is 64. A full-deflection push at that speed felt too coarse in
 # testing (noticeable overshoot, since Stop only reaches the camera after an HTTP round
-# trip): capped lower here. Revisit if this turns out to be too slow instead.
-MAX_SPEED = 24
+# trip): capped lower here, then lowered a little further after trying 24 live. Revisit
+# if this turns out to be too slow instead.
+MAX_SPEED = 18
 
 
 def plan_move(x: int, y: int, z: int) -> Optional[tuple[str, int]]:
