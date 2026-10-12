@@ -60,13 +60,10 @@ class UnifiCamBase(metaclass=ABCMeta):
         self.smart_detect_enabled: Optional[set] = None
         self.smart_detect_zones: Optional[dict] = None
         self.smart_exclude_zones: Optional[dict] = None
-        # Seeded from wall-clock time, not 0: Protect appears to key dedup/
-        # ordering on this id per camera and never resets its own high-water
-        # mark, so restarting a proxy process at 0 makes every event look
-        # already-seen and Protect silently stops recording motion/smart-
-        # detect events from that camera until the id climbs back above
-        # wherever it left off.
-        self._motion_event_id: int = int(time.time())
+        # Must stay small: Protect's ds daemon parses trackerID as a u32, and
+        # trackerID is derived from this id (see trigger_motion_start). Seeding
+        # it from the epoch overflowed that field and every event was dropped.
+        self._motion_event_id: int = 0
         self._motion_event_ts: Optional[float] = None
         self._motion_object_type: Optional[SmartDetectObjectType] = None
         self._ffmpeg_handles: dict[str, subprocess.Popen] = {}
@@ -456,11 +453,11 @@ class UnifiCamBase(metaclass=ABCMeta):
                         # status label — a bare number fails the whole
                         # AJV message.
                         "zonesStatus": {
-                            str(z): {"status": "enter"}
+                            str(z): {"level": self.SMART_ZONE_LEVEL, "status": "enter"}
                             for d in descriptors
                             for z in d["zones"]
                         }
-                        or {"1": {"status": "enter"}},
+                        or {"1": {"level": self.SMART_ZONE_LEVEL, "status": "enter"}},
                         "smartDetectSnapshot": "",
                         # Protect 7.x validates this against its
                         # smartDetectObjectsTransformMessage schema and
@@ -509,6 +506,12 @@ class UnifiCamBase(metaclass=ABCMeta):
     # stale positions behind moving subjects.
     SMART_DISPLAY_TIMEOUT_MS = 600
 
+    # ds requires a `level` next to `status` in every zonesStatus entry (real
+    # cameras send 0-100, ~65-90 while something is in the zone); without it
+    # the frame fails ds's typed parse and is relayed to Protect, which
+    # rejects it as "not expected over avclient".
+    SMART_ZONE_LEVEL = 80
+
     def build_smart_descriptor(
         self,
         object_type: str,
@@ -555,9 +558,11 @@ class UnifiCamBase(metaclass=ABCMeta):
             "eventType": "motion",
             "objectTypes": sorted({d["objectType"] for d in descriptors}),
             "zonesStatus": {
-                str(z): {"status": "moving"} for d in descriptors for z in d["zones"]
+                str(z): {"level": self.SMART_ZONE_LEVEL, "status": "moving"}
+                for d in descriptors
+                for z in d["zones"]
             }
-            or {"1": {"status": "moving"}},
+            or {"1": {"level": self.SMART_ZONE_LEVEL, "status": "moving"}},
             "displayTimeoutMSec": self.SMART_DISPLAY_TIMEOUT_MS,
             "descriptors": descriptors,
         }
@@ -586,7 +591,9 @@ class UnifiCamBase(metaclass=ABCMeta):
                     {
                         "objectTypes": [motion_object_type.value],
                         "edgeType": "leave",
-                        "zonesStatus": {"1": {"status": "leave"}},
+                        "zonesStatus": {
+                            "1": {"level": self.SMART_ZONE_LEVEL, "status": "leave"}
+                        },
                         "smartDetectSnapshot": "motionsnap.jpg",
                         "displayTimeoutMSec": self.SMART_DISPLAY_TIMEOUT_MS,
                         "descriptors": [],
