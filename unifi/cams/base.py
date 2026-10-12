@@ -14,6 +14,7 @@ import tempfile
 import time
 import urllib
 from abc import ABCMeta, abstractmethod
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -488,9 +489,9 @@ class UnifiCamBase(metaclass=ABCMeta):
                 else ""
             )
             await self.send(
-                self.gen_response(
+                self.gen_event(
                     "EventSmartDetect" if object_type else "EventAnalytics",
-                    payload=payload,
+                    payload,
                 ),
             )
             self._motion_event_ts = time.time()
@@ -575,7 +576,7 @@ class UnifiCamBase(metaclass=ABCMeta):
             "displayTimeoutMSec": self.SMART_DISPLAY_TIMEOUT_MS,
             "descriptors": descriptors,
         }
-        await self.send(self.gen_response("EventSmartDetect", payload=payload))
+        await self.send(self.gen_event("EventSmartDetect", payload))
 
     async def trigger_motion_stop(self) -> None:
         motion_start_ts = self._motion_event_ts
@@ -629,9 +630,9 @@ class UnifiCamBase(metaclass=ABCMeta):
                 else ""
             )
             await self.send(
-                self.gen_response(
+                self.gen_event(
                     "EventSmartDetect" if motion_object_type else "EventAnalytics",
-                    payload=payload,
+                    payload,
                 ),
             )
             self._motion_event_id += 1
@@ -1459,6 +1460,15 @@ class UnifiCamBase(metaclass=ABCMeta):
                 "features": {},
             },
         )
+
+    def gen_event(self, name: str, payload: dict[str, Any]) -> AVClientResponse:
+        # ds parses event envelopes with a typed schema that also requires timeStamp,
+        # as an RFC 3339 string (an integer is rejected); other message kinds are not
+        # parsed that way.
+        msg = self.gen_response(name, payload=payload)
+        stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        msg["timeStamp"] = stamp.replace("+00:00", "Z")  # type: ignore[typeddict-unknown-key]
+        return msg
 
     def gen_response(
         self, name: str, response_to: int = 0, payload: Optional[dict[str, Any]] = None
