@@ -4,11 +4,13 @@ Protect sends one ``ContinuousMove`` per joystick/zoom-slider tick while held, e
 ``{x, y, z}`` vector on roughly a -1000..1000 "normalized" scale, and a final all-zero message on
 release. Observed empirically against a real Reolink E1 Zoom (session 2026-10-12): pan/tilt and
 zoom arrive as separate messages (a zoom tick has no x/y keys at all), ``x>0`` is right, ``y>0`` is
-up, and a positive ``z`` is the direction the user pressed while testing "zoom in". Reolink's own
-``PtzCtrl`` (see the official HTTP API guide) takes a discrete, speed-scaled op instead of a
-vector, and a single ``Stop`` halts whatever is moving: Left/Right/Up/Down/LeftUp/LeftDown/
-RightUp/RightDown for pan/tilt, ZoomDec for zoom in and ZoomInc for zoom out (the official
-doc's naming, not ours).
+up. Reolink's own ``PtzCtrl`` (see the official HTTP API guide) takes a discrete, speed-scaled op
+instead of a vector, and a single ``Stop`` halts whatever is moving. The guide lists diagonal pan/
+tilt ops (LeftUp, RightDown, ...) and says ``ZoomDec``/``ZoomInc`` are zoom in/out, but on this
+camera the diagonal ops return success (code 0) and never move it, and the zoom pair is the
+opposite of the doc: confirmed by directly commanding the camera and watching it, not assumed.
+So only the four cardinal pan/tilt ops are ever sent (picking whichever axis is dominant when a
+drag is imprecisely diagonal), and ``z>0`` (what the UI treats as zoom in) maps to ``ZoomInc``.
 """
 
 import asyncio
@@ -23,17 +25,6 @@ DEADZONE = 20
 MIN_SPEED = 1
 MAX_SPEED = 64
 
-_PAN_TILT_OPS = {
-    (1, 0): "Right",
-    (-1, 0): "Left",
-    (0, 1): "Up",
-    (0, -1): "Down",
-    (1, 1): "RightUp",
-    (1, -1): "RightDown",
-    (-1, 1): "LeftUp",
-    (-1, -1): "LeftDown",
-}
-
 
 def plan_move(x: int, y: int, z: int) -> Optional[tuple[str, int]]:
     """Return (Reolink op, speed) for a ContinuousMove vector, or None to send Stop.
@@ -42,21 +33,17 @@ def plan_move(x: int, y: int, z: int) -> Optional[tuple[str, int]]:
     zoom), and speed is the strongest axis scaled onto Reolink's 1-64 range.
     """
     if abs(x) >= DEADZONE or abs(y) >= DEADZONE:
-        # Zero out whichever axis is inside the deadzone first, so a small amount of
-        # jitter on one axis doesn't turn an intended cardinal push into a diagonal.
-        sign_x = _sign(x) if abs(x) >= DEADZONE else 0
-        sign_y = _sign(y) if abs(y) >= DEADZONE else 0
-        op = _PAN_TILT_OPS.get((sign_x, sign_y))
-        if op is None:
-            return None
+        # This camera's firmware accepts diagonal ops but never actually moves for them
+        # (confirmed by sending one directly and watching); only a true cardinal op does
+        # anything, so pick whichever axis the drag leaned on harder.
+        if abs(x) >= abs(y):
+            op = "Right" if x > 0 else "Left"
+        else:
+            op = "Up" if y > 0 else "Down"
         return op, _scale_speed(max(abs(x), abs(y)))
     if abs(z) >= DEADZONE:
-        return ("ZoomDec" if z > 0 else "ZoomInc"), _scale_speed(abs(z))
+        return ("ZoomInc" if z > 0 else "ZoomDec"), _scale_speed(abs(z))
     return None
-
-
-def _sign(v: int) -> int:
-    return (v > 0) - (v < 0)
 
 
 def _scale_speed(magnitude: int) -> int:

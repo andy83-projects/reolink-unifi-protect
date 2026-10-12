@@ -1,8 +1,10 @@
 """Protect's PTZ joystick/zoom -> Reolink PtzCtrl, with a fake camera API only.
 
-Sign conventions (x>0=right, y>0=up, z>0=zoom in) and the "zoom and pan/tilt never arrive
-together" shape were read from a real Reolink E1 Zoom's messages during manual testing
-(session 2026-10-12), not guessed; see reolink_ptz.py's module docstring.
+Sign conventions (x>0=right, y>0=up, z>0=zoom in), the "zoom and pan/tilt never arrive
+together" shape, that diagonal pan/tilt ops are accepted but never move this camera, and that
+its zoom pair is the opposite of the official doc's naming, were all read from a real Reolink
+E1 Zoom during manual testing (session 2026-10-12), not guessed; see reolink_ptz.py's module
+docstring.
 """
 
 import argparse
@@ -27,11 +29,15 @@ def test_cardinal_directions():
     assert plan_move(0, -1000, 0)[0] == "Down"
 
 
-def test_diagonals():
-    assert plan_move(1000, 1000, 0)[0] == "RightUp"
-    assert plan_move(-1000, 1000, 0)[0] == "LeftUp"
-    assert plan_move(1000, -1000, 0)[0] == "RightDown"
-    assert plan_move(-1000, -1000, 0)[0] == "LeftDown"
+def test_diagonal_drags_pick_the_dominant_axis_instead_of_a_diagonal_op():
+    # Diagonal ops (LeftUp, RightDown, ...) are in the official doc and this camera's
+    # GetAbility, and it answers code 0 for them, but never actually moves: confirmed by
+    # sending one directly and watching the camera. So a diagonal-leaning drag has to
+    # resolve to whichever cardinal axis is strongest, never a diagonal op.
+    assert plan_move(1000, 999, 0)[0] == "Right"
+    assert plan_move(999, 1000, 0)[0] == "Up"
+    assert plan_move(-1000, -999, 0)[0] == "Left"
+    assert plan_move(-999, -1000, 0)[0] == "Down"
 
 
 def test_small_jitter_on_one_axis_stays_cardinal():
@@ -45,10 +51,12 @@ def test_pan_tilt_takes_priority_over_zoom():
     assert op == "Right"
 
 
-def test_zoom_direction_matches_the_official_docs_naming():
-    # Confirmed empirically: a positive z is what the user pressed as "zoom in".
-    assert plan_move(0, 0, 1000)[0] == "ZoomDec"
-    assert plan_move(0, 0, -1000)[0] == "ZoomInc"
+def test_zoom_direction_is_the_opposite_of_the_official_docs_naming():
+    # The official doc says ZoomDec is zoom in and ZoomInc is zoom out, but on this camera
+    # that's backwards: confirmed by commanding each op directly and watching it zoom the
+    # wrong way. z>0 (what the UI treats as zoom in) has to map to ZoomInc here.
+    assert plan_move(0, 0, 1000)[0] == "ZoomInc"
+    assert plan_move(0, 0, -1000)[0] == "ZoomDec"
 
 
 def test_speed_scales_from_the_strongest_axis():
