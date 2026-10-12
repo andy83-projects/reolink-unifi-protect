@@ -143,3 +143,39 @@ async def test_leave_frame_announces_a_servable_full_fov_image(cam):
     assert cam._smart_snapshot_files[name].exists()
     assert "smartDetectSnapshotFullFoVWidth" in leave
     assert "smartDetectSnapshotFullFoVHeight" in leave
+
+
+REAL_DESCRIPTOR_KEYS = {
+    "attributes", "boxColor", "confidenceLevel", "coord", "coord3d", "firstShownTimeMs",
+    "idleSinceTimeMs", "intelligenceZones", "lines", "loiterZones", "name", "objectType",
+    "secondLensZones", "stationary", "tag", "trackerID", "zones",
+}  # fmt: skip
+
+
+def test_descriptor_has_exactly_the_fields_a_real_camera_sends(cam):
+    d = cam.build_smart_descriptor("person", [100, 100, 200, 200], 0.9, 5)
+    assert set(d) == REAL_DESCRIPTOR_KEYS
+    assert d["boxColor"] == "red" and d["name"] == "" and d["attributes"] is None
+    assert d["coord3d"] == [-1, -1] and d["idleSinceTimeMs"] == 0
+
+
+def test_box_colours_follow_the_class_and_first_shown_is_stable_per_object(cam):
+    colours = {
+        t: cam.build_smart_descriptor(t, [0, 0, 1, 1], 0.9, i)["boxColor"]
+        for i, t in enumerate(("person", "vehicle", "animal"))
+    }
+    assert colours == {"person": "red", "vehicle": "cyan", "animal": "white"}
+    a = cam.build_smart_descriptor("person", [0, 0, 1, 1], 0.9, 7)
+    b = cam.build_smart_descriptor("person", [5, 5, 1, 1], 0.9, 7)
+    assert a["firstShownTimeMs"] == b["firstShownTimeMs"]
+
+
+async def test_enter_and_moving_frames_carry_the_empty_snapshot_fields(cam):
+    await cam.trigger_motion_start(SmartDetectObjectType.PERSON)
+    desc = [cam.build_smart_descriptor("person", [1, 2, 3, 4], 0.9, 9)]
+    await cam.trigger_motion_update(desc)
+    frames = [m["payload"] for m in cam.sent if m["functionName"] == "EventSmartDetect"]
+    assert [f["edgeType"] for f in frames] == ["enter", "moving"]
+    for f in frames:
+        assert f["smartDetectSnapshots"] == [] and f["smartDetectSnapshotFullFoV"] == ""
+        assert f["smartDetectSnapshotFullFoVWidth"] == 0

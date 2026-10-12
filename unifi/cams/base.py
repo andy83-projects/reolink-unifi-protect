@@ -503,6 +503,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                         }
                         or {"1": {"level": self.SMART_ZONE_LEVEL, "status": "enter"}},
                         "smartDetectSnapshot": "",
+                        **self.EMPTY_SNAPSHOT_FIELDS,
                         # Protect 7.x validates this against its
                         # smartDetectObjectsTransformMessage schema and
                         # derives the event's smartDetectTypes ONLY from
@@ -563,6 +564,17 @@ class UnifiCamBase(metaclass=ABCMeta):
     def synthetic_tracker_id(self) -> int:
         return (self._motion_event_id + 1) * 100
 
+    # Present (empty) on every real enter/moving frame; the leave frame fills them in.
+    EMPTY_SNAPSHOT_FIELDS: dict[str, Any] = {
+        "smartDetectSnapshotFullFoV": "",
+        "smartDetectSnapshotFullFoVHeight": 0,
+        "smartDetectSnapshotFullFoVWidth": 0,
+        "smartDetectSnapshots": [],
+    }
+
+    # Colours the real cameras draw each class in.
+    BOX_COLORS = {"person": "red", "vehicle": "cyan", "animal": "white"}
+
     def build_smart_descriptor(
         self,
         object_type: str,
@@ -572,21 +584,33 @@ class UnifiCamBase(metaclass=ABCMeta):
         zones: Optional[list] = None,
     ) -> dict[str, Any]:
         # Shape per Protect 7.x's smartDetectObjectsTransformMessage
-        # schema; coord is 0-1000 [x, y, w, h]. tracker_id must be
+        # schema, field for field what a real G5's frames carry (read from ds's
+        # payloads.jsonl); coord is 0-1000 [x, y, w, h]. tracker_id must be
         # STABLE per physical object across reports or the UI stacks a
         # new box per update instead of moving one.
+        now_ms = int(round(time.time() * 1000))
+        seen = self.__dict__.setdefault("_first_shown_ms", {})
+        if len(seen) > 256:
+            seen.clear()
+        first_shown = seen.setdefault(int(tracker_id), now_ms)
         return {
             "trackerID": int(tracker_id),
-            "name": object_type,
+            "name": "",
             "confidenceLevel": int(round(confidence * 100)),
             "coord": [int(c) for c in coord],
             "objectType": object_type,
             "zones": [int(z) for z in zones] if zones else [1],
             "lines": [],
             "loiterZones": [],
+            "intelligenceZones": [],
+            "secondLensZones": [],
             "stationary": False,
-            "attributes": {},
-            "coord3d": [],
+            "attributes": None,
+            "coord3d": [-1, -1],
+            "boxColor": self.BOX_COLORS.get(object_type, "white"),
+            "firstShownTimeMs": first_shown,
+            "idleSinceTimeMs": 0,
+            "tag": "",
         }
 
     async def trigger_motion_update(self, descriptors: list) -> None:
@@ -616,6 +640,7 @@ class UnifiCamBase(metaclass=ABCMeta):
             or {"1": {"level": self.SMART_ZONE_LEVEL, "status": "moving"}},
             "displayTimeoutMSec": self.SMART_DISPLAY_TIMEOUT_MS,
             "descriptors": descriptors,
+            **self.EMPTY_SNAPSHOT_FIELDS,
         }
         await self.send(self.gen_event("EventSmartDetect", payload))
 
