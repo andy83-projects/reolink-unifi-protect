@@ -93,4 +93,16 @@ Measured on Reolink doorbells:
   push-only behaviour unchanged;
 - the box setting in the Reolink app made no difference to which stream carries them.
 
-The image bundles Node and the sidecar (`Dockerfile.vaapi`). The PTZ E1 Zoom has no boxes.
+The image bundles Node and the sidecar (`Dockerfile.vaapi`). `--ai-sink-port` defaults to loopback
+port 8099 when `--ai-sidecar` is used. The E1 Zoom's boxes were not probed, so it does not use the sidecar.
+
+## Firmware notices
+
+Protect compares the firmware a camera *declares* with the newest version in its own catalog
+for that model's platform and shows "update available" when the camera is behind. A proxy has
+nothing to flash, so declare exactly the catalog's newest (`--fw-version`; the catalog is the
+`updates` table, for example `select platform, version from updates`). Do **not** declare a higher
+number: Protect treats a version above its catalog as invalid ("Force updating ... for satisfying the
+version requirement"), pushes an `UpdateFirmwareRequest` on every connect, the proxy declines it and
+reconnects, and the camera flaps about every 11 seconds. The notice returns when Ubiquiti ships a newer
+release for that platform. Cameras that declare no model (`--sysid`) have no catalog entry and show none.

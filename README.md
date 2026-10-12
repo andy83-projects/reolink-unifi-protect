@@ -53,7 +53,7 @@ list of options is in [docs/FLAGS.md](docs/FLAGS.md).
 |---|---|---|
 | **Reolink Video Doorbell** ×2 (firmware v3.0.0.6460_2605211897) | front and rear doorbells | rings from the button, call screen, two-way audio, push AI events, per-object crops and full-frame thumbnails, real detection boxes through the sidecar (main stream), active/standby failover |
 | **Reolink RLC-510A** | plain camera | push AI events, thumbnails, H.264 passthrough |
-| **Reolink E1 Zoom** (pan/tilt + optical zoom) | PTZ camera | joystick and zoom, Home View to preset 0, push AI events, thumbnails, image-settings writes, adoption as "UVC AI PTZ Industrial" (`--sysid 0xa604 --platform CV25Z`). It has no detection boxes, so the sidecar is not used there |
+| **Reolink E1 Zoom** (pan/tilt + optical zoom) | PTZ camera | joystick and zoom, Home View to preset 0, push AI events, thumbnails, image-settings writes, adoption as "UVC AI PTZ Industrial" (`--sysid 0xa604 --platform CV25Z`). Its detection boxes were not probed, so the sidecar is not used there |
 | **Reolink Elite Floodlight WiFi** | upstream author's development camera | H.265 passthrough, boxes via the sidecar's sub-stream mode |
 
 Controller: **UniFi Protect 7.1.87** (upstream author), **7.2.105** and **7.3.70**, all on a UDM Pro.
@@ -76,16 +76,22 @@ Reolink camera                      NAS / Docker host                    UniFi P
 RTSP main (5K HEVC)  ──►  ffmpeg -c:v copy ─► hevc_flv ─► clock_sync ──►  video1 (HQ, native H.265)
 RTSP sub  (H.264)    ──►  ffmpeg (QSV hevc transcode, optional) ───────►  video2/3 (LQ)
 HTTPS API            ──►  snapshots, GetAiState fallback poller
-Baichuan :9000       ──►  ai-sidecar (Node) ─► HTTP ─► proxy ──────────►  EventSmartDetect
+Baichuan :9000 push  ──►  proxy (reolink-aio) ─ detection start/stop, doorbell button
+Baichuan :9000 video ──►  ai-sidecar (Node) ─► HTTP ─► proxy ─────────►  EventSmartDetect
                           decodes per-object class + boxes                (moving bounding boxes)
 ```
+
+The sidecar can run as its own container (the reference compose file, always on, upstream's
+original setup) or **bundled in the proxy image and started by the proxy** with `--ai-sidecar`, which is
+the mode used on Reolink doorbells: it opens the camera's video stream only while a detection is in
+progress. See [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md#real-detection-boxes---ai-sidecar).
 
 Three moving parts, all in this repo:
 
 | Component | What it does |
 |---|---|
 | `unifi/` (the proxy) | Speaks `ubnt_avclient` to Protect: adoption, identity, streams, events. New modules: `hevc_flv.py` (UniFi HEVC framing), reworked `clock_sync.py` (wall-clock trailers). |
-| `deploy/ai-sidecar/` | Small Node service that subscribes to the camera's detection rectangles over the Baichuan protocol ([nodelink-js](https://github.com/apocaliss92/nodelink-js) for transport, own TLV decoder) and streams them to the proxy. |
+| `deploy/ai-sidecar/` | Small Node service that subscribes to the camera's detection rectangles over the Baichuan protocol ([nodelink-js](https://github.com/apocaliss92/nodelink-js) for transport, own TLV decoder) and streams them to the proxy. Runs standalone (always on) or, with `--ai-sidecar`, inside the proxy image under the proxy's supervision (on demand). |
 | `deploy/docker-compose.yml` | The reference deployment wiring it all together. |
 
 ## Quickstart
@@ -142,9 +148,9 @@ The full, generated list is in [docs/FLAGS.md](docs/FLAGS.md); the main ones are
 | `--lo-codec`, `--lo-h265-transcode`, `--lo-width/height/fps` | Same for video2/3, with optional QSV HEVC transcode of an H.264 sub stream |
 | `--sysid`, `--platform`, `--fw-build` | Full camera identity (e.g. `0xa598` / `sav837gw` = UVC G5 Pro) — required for Protect ≥ 3.x model recognition and the H.265 capability gate |
 | `--reolink-ai-host/-user/-password` | HTTPS `GetAiState` poller: typed detections even without the sidecar |
-| `--ai-sink-port` | HTTP endpoint where the Baichuan sidecar posts real per-object boxes |
-| `--ai-min-confidence`, `--ai-confidence-overrides` | Confidence gates, globally and per class (e.g. `animal=0.6`) |
-| `--ai-min-movement` | Suppresses detections that never move (kills "the house across the street is a person") |
+| `--ai-sink-port` | HTTP endpoint where a standalone Baichuan sidecar posts real per-object boxes (with `--ai-sidecar` it defaults to loopback port 8099) |
+| `--ai-min-confidence`, `--ai-confidence-overrides` | Confidence gates for *starting* an event from boxes, globally and per class (e.g. `animal=0.6`). Not applied in on-demand `--ai-sidecar` mode, where the camera's own push detection starts the event and boxes only decorate it (20% floor) |
+| `--ai-min-movement` | Suppresses boxes that never move (kills "the house across the street is a person"). Not applied in on-demand `--ai-sidecar` mode |
 | `--ai-classes` | Class priority when picking an event type |
 | `--reolink-push-ai` | Drive person/vehicle/animal detections from the camera's own Baichuan push channel (port 9000) instead of polling `GetAiState`; no HTTPS calls to the camera |
 | `--reolink-push-button` | Doorbell button press from the same push connection (see [docs/DOORBELL.md](docs/DOORBELL.md)) |

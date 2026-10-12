@@ -169,7 +169,8 @@ class RTSPCam(UnifiCamBase):
             "--ai-sink-port",
             default=0,
             type=int,
-            help="Port to receive AI box reports from the sidecar",
+            help="Port to receive AI box reports from a standalone sidecar"
+            " (defaults to loopback 8099 with --ai-sidecar)",
         )
         parser.add_argument(
             "--ai-sidecar",
