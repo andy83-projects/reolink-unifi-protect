@@ -60,8 +60,10 @@ def test_zoom_direction_is_the_opposite_of_the_official_docs_naming():
 
 
 def test_speed_scales_from_the_strongest_axis():
-    assert plan_move(1000, 0, 0)[1] == 64
-    assert plan_move(500, 0, 0)[1] == 32
+    from unifi.reolink_ptz import MAX_SPEED
+
+    assert plan_move(1000, 0, 0)[1] == MAX_SPEED
+    assert plan_move(500, 0, 0)[1] == round(MAX_SPEED / 2)
     assert plan_move(20, 0, 0)[1] == 1  # at the deadzone edge, never 0
 
 
