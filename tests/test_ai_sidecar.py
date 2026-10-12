@@ -303,3 +303,24 @@ def test_push_start_resets_the_per_event_crop_bookkeeping():
     c._ai_crops_made = {7, 8, 9}
     asyncio.run(c._apply_ai_states({"people": True}))
     assert c._ai_crops_made == set()
+
+
+def test_on_demand_a_fast_cat_is_one_object_not_three():
+    # Seen live: reports at x=577, 645, 789 (70-150 units apart) became three crops.
+    c = _gated_cam()
+    c._motion_event_ts = 1.0
+    ids = []
+    for x in (577, 645, 789):
+        box = dict(STILL_CAT, coord=[x, 600, 110, 90])
+        asyncio.run(c._on_ai_boxes([box]))
+        ids.append(box["track_id"])
+    assert len(set(ids)) == 1
+
+
+def test_on_demand_two_distant_animals_stay_two_objects():
+    c = _gated_cam()
+    c._motion_event_ts = 1.0
+    a = dict(STILL_CAT, coord=[100, 600, 100, 90])
+    b = dict(STILL_CAT, coord=[800, 600, 100, 90])
+    asyncio.run(c._on_ai_boxes([a, b]))
+    assert a["track_id"] != b["track_id"]

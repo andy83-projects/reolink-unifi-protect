@@ -28,6 +28,46 @@ Reolink with on-board detection.
 > a UniFi camera (UVC G5 Pro by default in the example config) toward your own
 > NVR. Protect updates may change the ingest protocol at any time.
 
+## What the andy83-projects fork adds
+
+Everything below was added on top of the upstream project and is covered by the unit tests in `tests/`.
+Each feature is opt-in by flag, so a camera that does not use it behaves exactly as before. The complete
+list of options is in [docs/FLAGS.md](docs/FLAGS.md).
+
+| Feature | Flags | Details |
+|---|---|---|
+| **Doorbells**: real rings, call screen and thumbnail from the button; the camera is advertised to Protect as a doorbell | `--doorbell`, `--reolink-push-button`, `--protect-ring-user/-password`, `--reolink-visitor-poll` | [docs/DOORBELL.md](docs/DOORBELL.md) |
+| **Two-way audio**: Protect's talk audio is converted to G.711 and played on the camera speaker over an ONVIF backchannel | `--speaker`, `--talkback-bridge` | [docs/DOORBELL.md](docs/DOORBELL.md) |
+| **Baichuan push events**: person / vehicle / animal and the doorbell button arrive over the camera's push channel (port 9000) instead of polling its web server, with endless reconnect and backoff | `--reolink-push-ai`, `--reolink-push-button` | [docs/DOORBELL.md](docs/DOORBELL.md) |
+| **UniFi Protect 7.3.x compatibility**: event frames match the strict schema of Protect's new `ds` daemon, so events are recorded again; how to debug `ds` rejections | (always on) | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
+| **Events that show up under the Person / Animal / Vehicle filters**: a per-object crop and a full-frame image are announced with every event | (always on) | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
+| **Real detection boxes** from the camera's own AI via the bundled Baichuan sidecar, run and supervised by the proxy, opened only while a detection is in progress | `--ai-sidecar`, `--ai-sidecar-profile`, `--ai-sidecar-always-on` | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
+| **PTZ**: Protect's joystick and zoom drive the camera, **Home View** returns to a camera preset | `--ptz`, `--ptz-home-preset` | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
+| **Image settings sync**: brightness, contrast, saturation, hue, sharpness, denoise, mirror/flip and WDR changed in Protect are written to the camera | `--reolink-isp` | `unifi/reolink_isp.py` |
+| **Remote reboot**: Protect's "restart camera" also reboots the Reolink (5 minute cooldown) | `--reolink-reboot` | `unifi/cams/rtsp.py` |
+| **One image for everything** (doorbells and plain cameras differ only in flags), Node and the sidecar included | | `Dockerfile.vaapi` |
+
+## Tested with
+
+| Camera | Role | Verified on real hardware |
+|---|---|---|
+| **Reolink Video Doorbell** ×2 (firmware v3.0.0.6460_2605211897) | front and rear doorbells | rings from the button, call screen, two-way audio, push AI events, per-object crops and full-frame thumbnails, real detection boxes through the sidecar (main stream), active/standby failover |
+| **Reolink RLC-510A** | plain camera | push AI events, thumbnails, H.264 passthrough |
+| **Reolink E1 Zoom** (pan/tilt + optical zoom) | PTZ camera | joystick and zoom, Home View to preset 0, push AI events, thumbnails, image-settings writes, adoption as "UVC AI PTZ Industrial" (`--sysid 0xa604 --platform CV25Z`). It has no detection boxes, so the sidecar is not used there |
+| **Reolink Elite Floodlight WiFi** | upstream author's development camera | H.265 passthrough, boxes via the sidecar's sub-stream mode |
+
+Controller: **UniFi Protect 7.1.87** (upstream author), **7.2.105** and **7.3.70**, all on a UDM Pro.
+
+Known gaps, so nobody assumes more than was checked:
+
+- `--reolink-reboot` is unit-tested but a live reboot from Protect has not been triggered on hardware.
+- `--reolink-isp`: the camera API accepted the values we send (HDR/WDR, brightness and friends were written and
+  restored), but Protect's slider-to-camera mapping has not been verified setting by setting, and the
+  mirror/flip direction is unconfirmed.
+- Boxes are on the **main** stream on the doorbells and the **sub** stream on the Floodlight; other models are
+  unverified, and the sidecar costs about 4.5 Mbit/s while a doorbell's main stream is open.
+- Only the `rtsp` source has the smart-detection bridge.
+
 ## Architecture
 
 ```
@@ -93,6 +133,8 @@ change any of those flags later, remove the camera in Protect, put a fresh
 adoption token in `.env`, and `docker compose up -d --force-recreate`.
 
 ## Notable flags added by this fork
+
+The full, generated list is in [docs/FLAGS.md](docs/FLAGS.md); the main ones are below.
 
 | Flag | Purpose |
 |---|---|
