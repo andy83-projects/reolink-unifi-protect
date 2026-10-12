@@ -100,6 +100,13 @@ class RTSPCam(UnifiCamBase):
             help="Advertise a pan/tilt/zoom camera so Protect shows its PTZ controls",
         )
         parser.add_argument(
+            "--ptz-home-preset",
+            type=int,
+            default=0,
+            help="Reolink preset id the camera returns to for Protect's Home View"
+            " (0 is the camera's 'default' preset)",
+        )
+        parser.add_argument(
             "--speaker",
             action="store_true",
             help="Advertise hasSpeaker and log Protect's talkback audio (experiment)",
@@ -631,6 +638,39 @@ class RTSPCam(UnifiCamBase):
                 self.logger,
             )
         return self._ptz
+
+    # Protect's reserved Home View preset slot (PTZ_PRESET_HOME_SLOT in its backend).
+    PROTECT_HOME_SLOT = -1
+
+    def _ptz_enabled(self) -> bool:
+        return bool(getattr(self.args, "ptz", False) and self.args.reolink_ai_host)
+
+    async def ptz_position(self) -> Optional[dict]:
+        # Reolink has no absolute-position readback, but Protect creates its home
+        # preset at connect from this reply and crashes ("reading 'pan'") without
+        # steps. Report a fixed origin; the home view is the camera's own preset.
+        if not self._ptz_enabled():
+            return None
+        origin = {"pan": 0, "tilt": 0, "zoom": 0}
+        return {
+            "inDegree": True,
+            "inSteps": True,
+            "degrees": dict(origin),
+            "steps": {**origin, "focus": 0},
+        }
+
+    async def ptz_preset(self, payload: dict) -> None:
+        if not self._ptz_enabled():
+            return
+        action = str(payload.get("action", "")).lower()
+        item = payload.get("item") or (payload.get("items") or [{}])[0] or {}
+        index = payload.get("index", item.get("index"))
+        if payload.get("function") == "Home" or (
+            action == "go" and index == self.PROTECT_HOME_SLOT
+        ):
+            await self._reolink_ptz_client().goto_preset(self.args.ptz_home_preset)
+        elif action == "go":
+            self.logger.info(f"Ignoring goto of Protect preset {index}: not mapped")
 
     async def continuous_move(self, x: int, y: int, z: int) -> None:
         if not (getattr(self.args, "ptz", False) and self.args.reolink_ai_host):

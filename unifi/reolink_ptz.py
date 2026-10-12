@@ -139,6 +139,27 @@ class ReolinkPtz:
                 continue
             return r.get("code") == 0
 
+    async def goto_preset(self, preset_id: int, speed: int = 32) -> bool:
+        """Drive the camera to one of its own saved presets (Reolink ``ToPos``).
+
+        Never raises. Resets the dedup state so the next joystick tick is always sent.
+        """
+        async with self._lock:
+            try:
+                ok = await self._ptz_ctrl(
+                    {"op": "ToPos", "id": preset_id, "speed": speed}
+                )
+                self._last_sent = (None, None)
+                if ok:
+                    self.logger.info("Reolink PTZ to preset %s", preset_id)
+                else:
+                    self.logger.warning("Reolink PTZ rejected preset %s", preset_id)
+                return ok
+            except Exception as exc:  # noqa: BLE001
+                self._token = None
+                self.logger.warning("Could not go to preset %s: %s", preset_id, exc)
+                return False
+
     async def continuous_move(self, x: int, y: int, z: int) -> None:
         """Apply one ContinuousMove tick. Never raises; a failure just logs and stops."""
         move = plan_move(x, y, z)

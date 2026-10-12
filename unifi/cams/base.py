@@ -234,6 +234,14 @@ class UnifiCamBase(metaclass=ABCMeta):
         """Called on each Protect PTZ joystick/zoom tick; override to act."""
         return
 
+    async def ptz_position(self) -> Optional[dict[str, Any]]:
+        """Reply payload for GetCurrentPosition, or None to just echo the request."""
+        return None
+
+    async def ptz_preset(self, payload: dict[str, Any]) -> None:
+        """Called for Protect's Preset/Home messages (home view is slot -1)."""
+        return
+
     @abstractmethod
     async def get_snapshot(self) -> Path:
         raise NotImplementedError("You need to write this!")
@@ -1571,6 +1579,8 @@ class UnifiCamBase(metaclass=ABCMeta):
                 "Reboot",
                 "ubnt_avclient_hello",
                 "ContinuousMove",
+                "Preset",
+                "Home",
             ]
         ):
             return False
@@ -1622,6 +1632,15 @@ class UnifiCamBase(metaclass=ABCMeta):
             await self.continuous_move(
                 payload.get("x", 0), payload.get("y", 0), payload.get("z", 0)
             )
+        elif fn == "GetCurrentPosition":
+            position = await self.ptz_position()
+            if position is not None:
+                res = self.gen_response(
+                    fn, response_to=m["messageId"], payload=position
+                )
+        elif fn in ("Preset", "Home"):
+            self.logger.info(f"PTZ {fn} message: {json.dumps(m.get('payload') or {})}")
+            await self.ptz_preset({"function": fn, **(m.get("payload") or {})})
 
         if res is None and m.get("responseExpected"):
             # Protect 7.x sends many settings requests (talkback, clarity
