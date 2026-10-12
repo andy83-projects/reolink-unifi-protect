@@ -191,6 +191,9 @@ def _push_cam(**over):
     c._sink_last_boxes_ts = 0.0
     c._ai_active_lead = None
     c._ai_tracks = []
+    c._ai_track_seq = 0
+    c.args.ai_movement_box_ratio = 0.25
+    c.args.ai_movement_reports = 2
     c.smart_detect_enabled = None
     c.smart_detect_zones = None
     c.smart_exclude_zones = None
@@ -249,3 +252,54 @@ def test_always_on_mode_keeps_the_old_behaviour():
     c._sink_last_boxes_ts = 0.0
     asyncio.run(c._on_ai_boxes([]))
     assert c.events == [("stop",)]  # and end them when the boxes disappear
+
+
+def _gated_cam(**over):
+    c = _push_cam(**over)
+    c.args.ai_min_confidence = 0.75  # the event-creation gates, as deployed
+    c.args.ai_min_movement = 10
+    c.args.ai_movement_box_ratio = 0.25
+    c.args.ai_movement_reports = 2
+    c.args.ai_confidence_overrides = ""
+    c._ai_track_seq = 0
+    return c
+
+
+STILL_CAT = {"type": "animal", "confidence": 0.33, "coord": [772, 572, 22, 46]}
+
+
+def test_on_demand_a_still_low_confidence_cat_still_gets_its_box():
+    # Seen live: a cat reads 30-70% and often sits still; the 75% / must-have-moved gates
+    # (meant for starting events) were dropping every box so Protect drew none.
+    c = _gated_cam()
+    c._motion_event_ts = 1.0
+    for _ in range(3):
+        asyncio.run(c._on_ai_boxes([dict(STILL_CAT)]))
+    assert c.events == [("update", 1)] * 3
+
+
+def test_always_on_mode_still_applies_the_event_creation_gates():
+    c = _gated_cam(ai_sidecar_always_on=True)
+    c._motion_event_ts = 1.0
+    asyncio.run(c._on_ai_boxes([dict(STILL_CAT)]))
+    # 33% and never moved: filtered out, so no box update, and with nothing left the
+    # always-on sidecar ends the event (its original behaviour)
+    assert c.events == [("stop",)]
+
+
+def test_on_demand_keeps_one_stable_track_id_per_object():
+    c = _gated_cam()
+    c._motion_event_ts = 1.0
+    ids = []
+    for dx in (0, 3, 6):
+        box = dict(STILL_CAT, coord=[772 + dx, 572, 22, 46])
+        asyncio.run(c._on_ai_boxes([box]))
+        ids.append(box["track_id"])
+    assert len(set(ids)) == 1
+
+
+def test_push_start_resets_the_per_event_crop_bookkeeping():
+    c = _push_cam()
+    c._ai_crops_made = {7, 8, 9}
+    asyncio.run(c._apply_ai_states({"people": True}))
+    assert c._ai_crops_made == set()

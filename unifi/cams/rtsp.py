@@ -424,7 +424,8 @@ class RTSPCam(UnifiCamBase):
         are remembered for a long time so intermittent re-detections of
         the same spot stay suppressed.
         """
-        if not self.args.ai_min_movement:
+        enrich = self._enrich_only()
+        if not self.args.ai_min_movement and not enrich:
             return boxes
         now = time.time()
         self._ai_tracks = [
@@ -475,7 +476,9 @@ class RTSPCam(UnifiCamBase):
                     coord[2],
                     coord[3],
                 )
-            if track["moving"]:
+            # Enrich-only keeps every box: a cat sitting still is still the detection. The
+            # tracks are still matched so each object keeps one stable id across reports.
+            if track["moving"] or enrich:
                 out.append(box)
         return out
 
@@ -504,7 +507,14 @@ class RTSPCam(UnifiCamBase):
             track["streak"] = 0
         return track["streak"] >= self.args.ai_movement_reports
 
+    # In on-demand mode the camera has already declared the detection, so boxes only decorate
+    # it: a cat reads 30-70% and should still get its box. Junk-box protection is for
+    # *starting* events, which boxes no longer do there.
+    SIDECAR_MIN_CONFIDENCE = 0.2
+
     def _min_confidence(self, kind: str) -> float:
+        if self._enrich_only():
+            return self.SIDECAR_MIN_CONFIDENCE
         overrides = getattr(self, "_conf_overrides", None)
         if overrides is None:
             overrides = {}
@@ -944,6 +954,7 @@ class RTSPCam(UnifiCamBase):
             self._ai_active = None  # the box sidecar drives events while it is alive
         elif desired and self._ai_active is None:
             self.logger.info(f"Reolink AI (push): {desired.value} detected")
+            self._ai_crops_made = set()  # per-event crop bookkeeping starts fresh
             await self.trigger_motion_start(desired)
             self._ai_active = desired
             # Push events carry no coordinates, so crop the same centred box
