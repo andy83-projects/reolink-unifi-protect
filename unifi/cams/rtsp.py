@@ -13,6 +13,29 @@ from aiohttp import web
 from unifi.cams.base import SmartDetectObjectType, UnifiCamBase
 
 
+def jpeg_size(path: Path) -> Optional[tuple[int, int]]:
+    """(width, height) from a JPEG's start-of-frame marker, or None if unreadable."""
+    try:
+        data = path.read_bytes()[:65536]
+    except OSError:
+        return None
+    i = 2
+    while i + 9 < len(data):
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if marker == 0xFF:
+            i += 1
+            continue
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            height = int.from_bytes(data[i + 5 : i + 7], "big")
+            width = int.from_bytes(data[i + 7 : i + 9], "big")
+            return (width, height) if width and height else None
+        i += 2 + int.from_bytes(data[i + 2 : i + 4], "big")
+    return None
+
+
 class RTSPCam(UnifiCamBase):
     AI_CLEAR_AFTER_SEC = 2.5
     # Movement-gate tracker: boxes must displace before they count.
@@ -496,12 +519,18 @@ class RTSPCam(UnifiCamBase):
                 src = snap
             ts_ms = int(round(time.time() * 1000))
 
-            fw = int(getattr(self.args, "hi_width", 0) or 1920)
-            fh = int(getattr(self.args, "hi_height", 0) or 1080)
+            # Size the crop from the frame actually being cropped: the snapshot
+            # can be the small sub-stream image, not the main stream's size.
+            size = jpeg_size(src)
+            if size:
+                fw, fh = size
+            else:
+                fw = int(getattr(self.args, "hi_width", 0) or 1920)
+                fh = int(getattr(self.args, "hi_height", 0) or 1080)
             x, y, w, h = (float(c) for c in coord)
             box_w, box_h = w * fw / 1000, h * fh / 1000
             cx, cy = (x + w / 2) * fw / 1000, (y + h / 2) * fh / 1000
-            side = int(max(320, min(fh, max(box_w, box_h) * 2.2)))
+            side = int(min(fw, fh, max(320, min(fh, max(box_w, box_h) * 2.2))))
             left = int(min(max(cx - side / 2, 0), fw - side))
             top = int(min(max(cy - side / 2, 0), fh - side))
 
@@ -533,10 +562,17 @@ class RTSPCam(UnifiCamBase):
             self._smart_snapshots.append(
                 {
                     "trackerID": int(tracker_id),
+                    "clockBestMonotonic": int(self.get_uptime()),
                     "clockBestWall": ts_ms,
+                    "confidenceLevel": 90,
+                    "coord": [int(c) for c in coord],
+                    "framingRect": [int(c) for c in coord],
+                    "reVerifyEligible": False,
                     "smartDetectSnapshot": fname,
+                    "smartDetectSnapshotHeight": side,
                     "smartDetectSnapshotType": kind,
                     "smartDetectSnapshotName": fname,
+                    "smartDetectSnapshotWidth": side,
                 }
             )
             self.logger.info(
@@ -670,6 +706,13 @@ class RTSPCam(UnifiCamBase):
             self.logger.info(f"Reolink AI (push): {desired.value} detected")
             await self.trigger_motion_start(desired)
             self._ai_active = desired
+            # Push events carry no coordinates, so crop the same centred box
+            # trigger_motion_start announced. Without a per-object crop ds
+            # stores no detectedThumbnails and Protect's Person/Animal/Vehicle
+            # filters never list the event.
+            await self._make_object_crop(
+                self.synthetic_tracker_id(), desired.value, self.SYNTHETIC_BOX
+            )
         elif desired is None and self._ai_active is not None:
             self.logger.info("Reolink AI (push): clear")
             await self.trigger_motion_stop()
