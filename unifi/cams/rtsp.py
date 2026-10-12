@@ -12,6 +12,7 @@ from aiohttp import web
 
 from unifi.cams.base import SmartDetectObjectType, UnifiCamBase
 from unifi.reolink_isp import ReolinkIsp
+from unifi.reolink_ptz import ReolinkPtz
 
 
 class RTSPCam(UnifiCamBase):
@@ -92,6 +93,11 @@ class RTSPCam(UnifiCamBase):
             "--doorbell",
             action="store_true",
             help="Advertise the camera as a doorbell (featureFlags.doorbell)",
+        )
+        parser.add_argument(
+            "--ptz",
+            action="store_true",
+            help="Advertise a pan/tilt/zoom camera so Protect shows its PTZ controls",
         )
         parser.add_argument(
             "--speaker",
@@ -602,6 +608,38 @@ class RTSPCam(UnifiCamBase):
         self._last_reboot = now
         # Reply now; the camera takes a moment to answer and then goes away.
         self._reboot_task = asyncio.create_task(self._reolink_client().reboot())
+
+    def _reolink_ptz_client(self) -> ReolinkPtz:
+        if not hasattr(self, "_ptz"):
+            self._ptz = ReolinkPtz(
+                self.args.reolink_ai_host,
+                self.args.reolink_ai_user,
+                self.args.reolink_ai_password,
+                self.logger,
+            )
+        return self._ptz
+
+    async def continuous_move(self, x: int, y: int, z: int) -> None:
+        if not (getattr(self.args, "ptz", False) and self.args.reolink_ai_host):
+            return
+        # Protect sends a ContinuousMove tick faster than an HTTP round trip to the
+        # camera, so cancelling and replacing the in-flight request (the first cut of
+        # this) meant no request ever survived long enough to reach the camera. Instead,
+        # remember only the latest tick and let one worker drain it: finish the request
+        # that's in flight, then immediately send whatever is now the latest tick
+        # (including a release's all-zero Stop) rather than waiting for another message.
+        self._ptz_pending = (x, y, z)
+        prev = getattr(self, "_ptz_task", None)
+        if prev is None or prev.done():
+            self._ptz_task = asyncio.create_task(self._drain_ptz_moves())
+
+    async def _drain_ptz_moves(self) -> None:
+        client = self._reolink_ptz_client()
+        while True:
+            move = self._ptz_pending
+            await client.continuous_move(*move)
+            if self._ptz_pending == move:
+                return
 
     async def _push_reolink(self) -> None:
         from reolink_aio.api import Host
