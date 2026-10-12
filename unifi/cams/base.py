@@ -206,6 +206,10 @@ class UnifiCamBase(metaclass=ABCMeta):
         """Called when Protect asks the camera to reboot; override to act."""
         return
 
+    async def continuous_move(self, x: int, y: int, z: int) -> None:
+        """Called on each Protect PTZ joystick/zoom tick; override to act."""
+        return
+
     @abstractmethod
     async def get_snapshot(self) -> Path:
         raise NotImplementedError("You need to write this!")
@@ -322,6 +326,10 @@ class UnifiCamBase(metaclass=ABCMeta):
         if getattr(self.args, "doorbell", False):
             # Protect shows doorbell UI off featureFlags.doorbell
             flags["doorbell"] = True
+        if getattr(self.args, "ptz", False):
+            # Protect derives isPtz from the short `ptz` key (like `speaker`)
+            flags["ptz"] = True
+            flags["isPtz"] = True
         if getattr(self.args, "speaker", False):
             # Protect maps hasSpeaker from the camera's short `speaker` key
             flags["speaker"] = True
@@ -1472,6 +1480,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                 "UpdateFirmwareRequest",
                 "Reboot",
                 "ubnt_avclient_hello",
+                "ContinuousMove",
             ]
         ):
             return False
@@ -1518,6 +1527,11 @@ class UnifiCamBase(metaclass=ABCMeta):
         elif fn == "Reboot":
             await self.reboot_camera()
             return True
+        elif fn == "ContinuousMove":
+            payload = m.get("payload") or {}
+            await self.continuous_move(
+                payload.get("x", 0), payload.get("y", 0), payload.get("z", 0)
+            )
 
         if res is None and m.get("responseExpected"):
             # Protect 7.x sends many settings requests (talkback, clarity
