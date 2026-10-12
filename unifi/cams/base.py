@@ -84,6 +84,9 @@ class UnifiCamBase(metaclass=ABCMeta):
         self.smart_detect_enabled: Optional[set] = None
         self.smart_detect_zones: Optional[dict] = None
         self.smart_exclude_zones: Optional[dict] = None
+        # Must stay small: Protect's ds daemon parses trackerID as a u32, and
+        # trackerID is derived from this id (see trigger_motion_start). Seeding
+        # it from the epoch overflowed that field and every event was dropped.
         self._motion_event_id: int = 0
         self._motion_event_ts: Optional[float] = None
         self._motion_object_type: Optional[SmartDetectObjectType] = None

@@ -194,10 +194,21 @@ def test_network_guard_blocks_real_addresses():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         try:
-            s.connect(("10.0.1.159", 443))
+            s.connect(("192.0.2.159", 443))
         except AssertionError as exc:
-            assert "10.0.1.159" in str(exc)
+            assert "192.0.2.159" in str(exc)
         else:
             raise AssertionError("guard did not block a non-local connect")
     finally:
         s.close()
+
+
+def test_ptz_flag_sets_the_feature_keys():
+    from unifi.cams.base import UnifiCamBase
+
+    for ptz in (False, True):
+        c = RTSPCam.__new__(RTSPCam)
+        c.args = argparse.Namespace(ptz=ptz, hi_codec="h264")
+        flags = asyncio.run(UnifiCamBase.get_feature_flags(c))
+        assert flags["isPtz"] is ptz
+        assert ("ptz" in flags) is ptz
