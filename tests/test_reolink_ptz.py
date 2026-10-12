@@ -321,9 +321,15 @@ def _home_cam():
     async def send(msg):
         c.sent.append(msg)
 
+    c.saves = []
+
     class Client:
         async def goto_preset(self_inner, preset_id, speed=32):
             c.gotos.append(preset_id)
+            return True
+
+        async def save_preset(self_inner, preset_id, name="Home View"):
+            c.saves.append(preset_id)
             return True
 
     c.send = send
@@ -391,3 +397,52 @@ def test_goto_preset_sends_topos_and_resets_dedup():
     call = [c for call in cam.calls for c in call if c["cmd"] == "PtzCtrl"][0]
     assert call["param"]["op"] == "ToPos" and call["param"]["id"] == 0
     assert cam._last_sent == (None, None)
+
+
+def _late(c):
+    c._started_at = -1000  # long past the init grace period
+
+
+def test_setting_home_saves_the_camera_preset_when_enabled():
+    c = _home_cam()
+    c.args.ptz_set_home = True
+    c.args.ptz_home_preset = 2
+    _late(c)
+    payload = {"action": "set", "item": {"index": -1, "name": "Home View"}}
+    asyncio.run(c.process(_msg("Preset", payload, expected=True)))
+    assert c.saves == [2] and c.gotos == []
+
+
+def test_setting_home_does_nothing_without_the_flag():
+    c = _home_cam()
+    _late(c)
+    payload = {"action": "set", "item": {"index": -1}}
+    asyncio.run(c.process(_msg("Preset", payload, expected=True)))
+    assert c.saves == []
+
+
+def test_protects_initial_home_set_right_after_start_is_ignored():
+    c = _home_cam()
+    c.args.ptz_set_home = True
+    import time
+
+    c._started_at = time.monotonic()
+    payload = {"action": "set", "item": {"index": -1}}
+    asyncio.run(c.process(_msg("Preset", payload, expected=True)))
+    assert c.saves == []
+
+
+def test_setting_other_presets_never_saves():
+    c = _home_cam()
+    c.args.ptz_set_home = True
+    _late(c)
+    asyncio.run(c.process(_msg("Preset", {"action": "set", "item": {"index": 3}})))
+    assert c.saves == []
+
+
+def test_save_preset_sends_setptzpreset():
+    cam = FakeCam()
+    assert asyncio.run(cam.save_preset(4, "Home View"))
+    call = [c for call in cam.calls for c in call if c["cmd"] == "SetPtzPreset"][0]
+    assert call["param"]["PtzPreset"]["id"] == 4
+    assert call["param"]["PtzPreset"]["enable"] == 1

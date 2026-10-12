@@ -111,6 +111,12 @@ class RTSPCam(UnifiCamBase):
             " (0 is the camera's 'default' preset)",
         )
         parser.add_argument(
+            "--ptz-set-home",
+            action="store_true",
+            help="Let Protect's 'Set Home View' store the camera's current position in"
+            " the --ptz-home-preset slot (overwrites that preset)",
+        )
+        parser.add_argument(
             "--speaker",
             action="store_true",
             help="Advertise hasSpeaker and log Protect's talkback audio (experiment)",
@@ -820,8 +826,25 @@ class RTSPCam(UnifiCamBase):
             action == "go" and index == self.PROTECT_HOME_SLOT
         ):
             await self._reolink_ptz_client().goto_preset(self.args.ptz_home_preset)
+        elif action == "set" and index == self.PROTECT_HOME_SLOT:
+            await self._set_home_view()
         elif action == "go":
             self.logger.info(f"Ignoring goto of Protect preset {index}: not mapped")
+
+    # Protect also sends this same SET once, when it first meets a PTZ camera, to
+    # create its default home view (from our fixed-origin position). That must not
+    # overwrite the camera's preset, so SETs this soon after start are ignored.
+    SET_HOME_GRACE_S = 90
+    _started_at = time.monotonic()  # process start (class body runs at import)
+
+    async def _set_home_view(self) -> None:
+        if not getattr(self.args, "ptz_set_home", False):
+            self.logger.info("Protect set the Home View; --ptz-set-home is off")
+            return
+        if time.monotonic() - self._started_at < self.SET_HOME_GRACE_S:
+            self.logger.info("Ignoring Home View set right after start (Protect init)")
+            return
+        await self._reolink_ptz_client().save_preset(self.args.ptz_home_preset)
 
     async def continuous_move(self, x: int, y: int, z: int) -> None:
         if not (getattr(self.args, "ptz", False) and self.args.reolink_ai_host):
