@@ -82,7 +82,7 @@ def test_network_guard_blocks_real_upload_targets(tmp_path):
     cam = make_cam(path)
 
     async def scenario():
-        await cam.process_snapshot_request(msg(uri="http://10.0.1.156:1/upload"))
+        await cam.process_snapshot_request(msg(uri="http://192.0.2.156:1/upload"))
 
-    with pytest.raises(AssertionError, match="10.0.1.156"):
+    with pytest.raises(AssertionError, match="192.0.2.156"):
         asyncio.run(scenario())

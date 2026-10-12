@@ -111,6 +111,9 @@ adoption token in `.env`, and `docker compose up -d --force-recreate`.
 | `--speaker`, `--talkback-bridge` | Two-way audio: Protect's talk audio is converted to G.711 and played on the camera speaker over an ONVIF RTSP backchannel |
 | `--reolink-visitor-poll` | Fallback: poll `GetEvents` for the button instead of using push |
 | `--snapshot-url` | Snapshot via the camera's HTTP(S) API instead of a fourth RTSP session (Reolink WiFi cameras limit concurrent RTSP) |
+| `--ptz`, `--ptz-home-preset` | Advertise a pan/tilt/zoom camera so Protect shows its joystick; drive the Reolink from Protect's controls and map Home View to a camera preset (see [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md)) |
+| `--reolink-isp` | Write Protect's image settings (brightness, contrast, WDR, ...) to the camera when they change |
+| `--reolink-reboot` | Reboot the Reolink camera when Protect's restart camera is used |
 
 ## Doorbells, push events and two-way audio
 
@@ -120,6 +123,14 @@ and AI events arrive over the camera's push channel rather than by polling its
 web server. One image serves both doorbells and plain cameras; the behaviour is
 chosen with flags. Details, and the Protect internals they rest on, are in
 [`docs/DOORBELL.md`](docs/DOORBELL.md).
+
+## Protect 7.3.x compatibility
+
+Protect 7.3.70 moved smart-detect handling into a native `ds` daemon with a strict
+event schema. Frames that do not match are dropped with a misleading
+"not expected over avclient" error. The proxy is compatible with it; what changed,
+how to debug it from `ds`'s own log, and the PTZ findings are in
+[`docs/PROTECT-7.3.md`](docs/PROTECT-7.3.md).
 
 ## Protocol notes
 
