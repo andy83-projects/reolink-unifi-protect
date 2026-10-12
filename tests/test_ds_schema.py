@@ -1,0 +1,108 @@
+"""EventSmartDetect frames must satisfy the typed parse in Protect's ds daemon.
+
+ds (the device service that now owns smart-detect events) rejects a frame it cannot
+parse and relays it raw to Protect, which logs "Received EventSmartDetect over avclient
+which was not expected". Two real failures, both read from ds.log:
+  - "missing field `level`": every zonesStatus entry needs a level next to its status
+  - "invalid value: integer 179181301300, expected u32": trackerID overflowed because
+    the event id was seeded from the epoch
+"""
+
+import argparse
+import logging
+import subprocess
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from unifi.cams.base import SmartDetectObjectType
+from unifi.cams.rtsp import RTSPCam
+
+U32_MAX = 2**32 - 1
+FAKE_JPEG = b"\xff\xd8\xff" + b"\0" * 64 + b"\xff\xd9"
+
+
+@pytest.fixture
+def cert(tmp_path_factory) -> Path:
+    d = tmp_path_factory.mktemp("cert")
+    key, crt = d / "k.pem", d / "c.pem"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes"]
+        + ["-keyout", str(key), "-out", str(crt), "-days", "1", "-subj", "/CN=t"],
+        check=True,
+        capture_output=True,
+    )
+    pem = d / "client.pem"
+    pem.write_bytes(key.read_bytes() + crt.read_bytes())
+    return pem
+
+
+@pytest.fixture
+def cam(tmp_path, cert, monkeypatch):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    args = argparse.Namespace(
+        cert=str(cert),
+        source=["rtsp://cam/main"],
+        snapshot_url="http://cam/snap",
+        rtsp_transport="tcp",
+        hi_width=1920,
+        hi_height=1080,
+    )
+    c = RTSPCam(args, logging.getLogger("test"))
+    frame = tmp_path / "frame.jpg"
+    frame.write_bytes(FAKE_JPEG)
+    c.sent = []
+
+    async def send(msg):
+        c.sent.append(msg)
+
+    async def get_snapshot():
+        return frame
+
+    monkeypatch.setattr(c, "send", send)
+    monkeypatch.setattr(c, "get_snapshot", get_snapshot)
+    return c
+
+
+def zone_entries(payload):
+    return list(payload.get("zonesStatus", {}).values())
+
+
+async def test_every_zone_status_has_a_level(cam):
+    await cam.trigger_motion_start(SmartDetectObjectType.PERSON)
+    descriptors = [
+        cam.build_smart_descriptor("person", [100, 100, 200, 200], 0.9, 5, zones=[1])
+    ]
+    await cam.trigger_motion_update(descriptors)
+    await cam.trigger_motion_stop()
+
+    frames = [m["payload"] for m in cam.sent if m["functionName"] == "EventSmartDetect"]
+    assert [p["edgeType"] for p in frames] == ["enter", "moving", "leave"]
+    for p in frames:
+        entries = zone_entries(p)
+        assert entries
+        for z in entries:
+            assert isinstance(z["level"], int) and 0 <= z["level"] <= 100
+            assert "status" in z
+
+
+async def test_ids_fit_in_u32_even_after_many_events(cam):
+    cam._motion_event_id = 100_000  # a very busy camera
+    await cam.trigger_motion_start(SmartDetectObjectType.VEHICLE)
+    start = next(
+        m["payload"] for m in cam.sent if m["functionName"] == "EventSmartDetect"
+    )
+    assert start["eventId"] <= U32_MAX
+    for d in start["descriptors"]:
+        assert d["trackerID"] <= U32_MAX
+
+
+async def test_fresh_process_starts_with_small_ids(cam):
+    # Regression: seeding from time.time() made trackerID ~1.8e11 (> u32).
+    await cam.trigger_motion_start(SmartDetectObjectType.PERSON)
+    start = next(
+        m["payload"] for m in cam.sent if m["functionName"] == "EventSmartDetect"
+    )
+    assert start["eventId"] < 1_000_000
+    assert all(d["trackerID"] <= U32_MAX for d in start["descriptors"])
