@@ -94,4 +94,3 @@ Measured on Reolink doorbells:
 - the box setting in the Reolink app made no difference to which stream carries them.
 
 The image bundles Node and the sidecar (`Dockerfile.vaapi`). The PTZ E1 Zoom has no boxes.
-
