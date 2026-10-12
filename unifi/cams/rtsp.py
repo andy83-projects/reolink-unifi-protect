@@ -317,6 +317,18 @@ class RTSPCam(UnifiCamBase):
     # Loopback port the bundled sidecar reports to when --ai-sink-port is not given.
     SIDECAR_SINK_PORT = 8099
 
+    def _enrich_only(self) -> bool:
+        """On-demand sidecar: the push channel starts/stops events, boxes only enrich them.
+
+        The sidecar's stream is open only while a detection is in progress, so it must
+        never start an event (it is not running yet) or end one (its first reports are
+        empty while the stream warms up), and it must not suppress the push channel.
+        """
+        return bool(
+            getattr(self.args, "ai_sidecar", False)
+            and not getattr(self.args, "ai_sidecar_always_on", False)
+        )
+
     async def _handle_sidecar_state(self, request) -> web.Response:
         # The sidecar opens its (expensive) camera stream only while this is true.
         active = (
@@ -508,6 +520,8 @@ class RTSPCam(UnifiCamBase):
 
     async def _on_ai_boxes(self, boxes: list) -> None:
         self._sink_last_ts = time.time()
+        if self._enrich_only() and not self._motion_event_ts:
+            return
         # Raw view of everything the camera reports, before any filter —
         # the ground truth when diagnosing missed/misclassified subjects.
         if boxes and time.time() - getattr(self, "_ai_raw_log_ts", 0) > 1.0:
@@ -575,7 +589,8 @@ class RTSPCam(UnifiCamBase):
                 )
                 self._ai_active_lead = lead
             elif (
-                self._ai_active_lead
+                not self._enrich_only()
+                and self._ai_active_lead
                 and lead in priority
                 and priority.index(lead) < priority.index(self._ai_active_lead)
             ):
@@ -612,6 +627,7 @@ class RTSPCam(UnifiCamBase):
                     )
         elif (
             self._motion_event_ts
+            and not self._enrich_only()
             and time.time() - getattr(self, "_sink_last_boxes_ts", 0)
             > self.AI_CLEAR_AFTER_SEC
         ):
@@ -924,7 +940,7 @@ class RTSPCam(UnifiCamBase):
                     self._ai_class_state[object_type.value] = now
                     if desired is None:
                         desired = object_type
-        if time.time() - self._sink_last_ts < 10:
+        if time.time() - self._sink_last_ts < 10 and not self._enrich_only():
             self._ai_active = None  # the box sidecar drives events while it is alive
         elif desired and self._ai_active is None:
             self.logger.info(f"Reolink AI (push): {desired.value} detected")

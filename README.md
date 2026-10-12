@@ -110,6 +110,7 @@ adoption token in `.env`, and `docker compose up -d --force-recreate`.
 | `--protect-ring-user/-password` | A local Protect user the proxy logs in as to raise a real ring on a button press |
 | `--speaker`, `--talkback-bridge` | Two-way audio: Protect's talk audio is converted to G.711 and played on the camera speaker over an ONVIF RTSP backchannel |
 | `--reolink-visitor-poll` | Fallback: poll `GetEvents` for the button instead of using push |
+| `--ai-sidecar`, `--ai-sidecar-profile`, `--ai-sidecar-always-on` | Run the bundled Baichuan box sidecar: events carry the camera's real moving detection boxes and per-object crops. On-demand by default (stream open only during detections). See [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
 | `--snapshot-url` | Snapshot via the camera's HTTP(S) API instead of a fourth RTSP session (Reolink WiFi cameras limit concurrent RTSP) |
 | `--ptz`, `--ptz-home-preset` | Advertise a pan/tilt/zoom camera so Protect shows its joystick; drive the Reolink from Protect's controls and map Home View to a camera preset (see [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md)) |
 | `--reolink-isp` | Write Protect's image settings (brightness, contrast, WDR, ...) to the camera when they change |

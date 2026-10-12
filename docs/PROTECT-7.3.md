@@ -71,3 +71,27 @@ on a Reolink E1 Zoom:
   message with `action: go, index: -1`; the proxy drives the camera to its own
   preset (`--ptz-home-preset`, default 0, the camera's "default") with `PtzCtrl ToPos`.
   Setting the home preset in Protect does not move the camera.
+
+## Real detection boxes (`--ai-sidecar`)
+
+Push events only say "a person is present", so by default an event uses a centred
+placeholder box and crop. Recent Reolink cameras also send the boxes the app draws,
+inside the headers of the video frames on the Baichuan port (9000). `deploy/ai-sidecar`
+reads them (nodelink-js for transport, our own TLV decoder) and `--ai-sidecar` runs it
+as a subprocess of the proxy, so the standby replica never opens a session.
+
+Measured on Reolink doorbells:
+
+- the boxes are on the **main** stream (every frame); the **sub** stream carries only an
+  8-byte counter. `--ai-sidecar-profile` therefore defaults to `main`;
+- the main stream costs about 4.5 Mbit/s, ~125 MiB and ~56 m CPU for the Node process,
+  so by default the stream is **on-demand**: the sidecar polls the proxy's loopback
+  `/state` and opens it only while a detection is in progress (plus a few seconds), then
+  closes it. `--ai-sidecar-always-on` keeps it open and lets boxes start/stop events;
+- in on-demand mode the push channel starts and ends events and the boxes only *enrich*
+  the running event (moving boxes, per-object crops); a missing or failing sidecar leaves
+  push-only behaviour unchanged;
+- the box setting in the Reolink app made no difference to which stream carries them.
+
+The image bundles Node and the sidecar (`Dockerfile.vaapi`). The PTZ E1 Zoom has no boxes.
+
