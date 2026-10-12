@@ -36,6 +36,13 @@ def cam():
     c._sink_last_ts = 0.0
     c.smart_detect_enabled = None
     c.events = []
+    c.crops = []
+    c._motion_event_id = 0
+
+    async def crop(tracker_id, kind, coord):
+        c.crops.append((tracker_id, kind, coord))
+
+    c._make_object_crop = crop
 
     async def start(object_type=None, descriptors=None):
         c.events.append(("start", object_type))
@@ -198,3 +205,11 @@ def test_ai_states_are_preseeded_for_the_push_callback(cam, monkeypatch):
 
     host = asyncio.run(run())
     assert host._ai_detection_states[0] == states()
+
+
+async def test_push_detection_requests_a_per_object_crop(cam):
+    # Without a crop ds stores no detectedThumbnails and Protect's Person/Animal/
+    # Vehicle filters never list the event.
+    await cam._apply_ai_states(states(people=True))
+    await cam._apply_ai_states(states(people=True))  # repeated: no second crop
+    assert cam.crops == [(100, "person", cam.SYNTHETIC_BOX)]
