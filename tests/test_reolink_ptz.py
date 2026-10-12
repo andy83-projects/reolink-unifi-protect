@@ -90,19 +90,41 @@ def sent_ops(cam):
     ]
 
 
+def sent_speeds(cam):
+    return [
+        c["param"].get("speed")
+        for call in cam.calls
+        for c in call
+        if c["cmd"] == "PtzCtrl"
+    ]
+
+
 def test_continuous_move_sends_the_op():
     cam = FakeCam()
     asyncio.run(cam.continuous_move(1000, 0, 0))
     assert sent_ops(cam) == ["Right"]
 
 
-def test_same_direction_is_not_resent():
+def test_identical_op_and_speed_is_not_resent():
     cam = FakeCam()
     asyncio.run(cam.continuous_move(1000, 0, 0))
+    # x=995 rounds to the same speed as x=1000 (18): a genuine no-op tick, not just
+    # the same direction, so it must not cause a second send.
     asyncio.run(
-        cam.continuous_move(900, 5, 0)
-    )  # still "Right": y=5 is inside the deadzone
+        cam.continuous_move(995, 5, 0)
+    )  # still "Right" at the same speed: y=5 is inside the deadzone
     assert sent_ops(cam) == ["Right"]
+
+
+def test_speed_change_mid_hold_is_resent():
+    # Regression for the bug where a held direction kept whatever speed the first
+    # tick sent: Reolink has no speed-only update, so a weaker/stronger push in the
+    # same direction must still issue a new PtzCtrl, not be deduped away.
+    cam = FakeCam()
+    asyncio.run(cam.continuous_move(1000, 0, 0))
+    asyncio.run(cam.continuous_move(500, 0, 0))
+    assert sent_ops(cam) == ["Right", "Right"]
+    assert sent_speeds(cam)[0] != sent_speeds(cam)[1]
 
 
 def test_release_sends_stop_once():

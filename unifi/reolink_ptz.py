@@ -70,7 +70,10 @@ class ReolinkPtz:
         self.channel = channel
         self._token: Optional[str] = None
         self._lock = asyncio.Lock()
-        self._last_op: Optional[str] = None
+        # (op, speed) of the last command actually sent. Speed is part of the key:
+        # Reolink has no speed-only update, so a stronger/weaker push mid-hold in the
+        # same direction must still issue a new PtzCtrl, not just a direction change.
+        self._last_sent: tuple[Optional[str], Optional[int]] = (None, None)
 
     async def _post(self, query: str, body: list) -> list:
         url = f"https://{self.host}/cgi-bin/api.cgi?{query}"
@@ -122,19 +125,19 @@ class ReolinkPtz:
         """Apply one ContinuousMove tick. Never raises; a failure just logs and stops."""
         move = plan_move(x, y, z)
         op = move[0] if move else "Stop"
-        if op == self._last_op:
-            return  # same direction/stop already in effect; Reolink has no speed-only update
+        speed = move[1] if move else None
+        sent = (op, speed)
+        if sent == self._last_sent:
+            return  # identical op+speed already in effect, nothing to update
         async with self._lock:
             try:
                 param = {"op": op}
                 if move:
-                    param["speed"] = move[1]
+                    param["speed"] = speed
                 ok = await self._ptz_ctrl(param)
                 if ok:
-                    self._last_op = op
-                    self.logger.info(
-                        "Reolink PTZ op %s (speed %s)", op, param.get("speed", "-")
-                    )
+                    self._last_sent = sent
+                    self.logger.info("Reolink PTZ op %s (speed %s)", op, speed or "-")
                 else:
                     self.logger.warning("Reolink PTZ rejected op %s", op)
             except Exception as exc:  # noqa: BLE001
