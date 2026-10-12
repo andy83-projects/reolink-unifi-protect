@@ -125,11 +125,11 @@ def test_handshake_mac_is_the_canonical_12_hex_form(cert):
     from unifi.core import Core
 
     args = argparse.Namespace(
-        host="h", token="t", mac="02:4a:5f:b1:3b:03", cert=str(cert)
+        host="h", token="t", mac="02:aa:bb:cc:dd:ee", cert=str(cert)
     )
     core = Core(args, camera=None, logger=logging.getLogger("test"))
     # ds looks the camera up by this header; Protect stores it without colons.
-    assert core._headers()["camera-mac"] == "024A5FB13B03"
+    assert core._headers()["camera-mac"] == "02AABBCCDDEE"
 
 
 async def test_leave_frame_announces_a_servable_full_fov_image(cam):
