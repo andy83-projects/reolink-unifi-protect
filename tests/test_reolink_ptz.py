@@ -310,3 +310,84 @@ def test_dropped_connection_reconnects_once(monkeypatch):
     res = asyncio.run(ptz._post("token=t", []))
     assert res == [{"code": 0}]
     assert len(made) == 2 and made[0].closed
+
+
+def _home_cam():
+    c = make_ptz_cam()
+    c.args.ptz_home_preset = 0
+    c.sent = []
+    c.gotos = []
+
+    async def send(msg):
+        c.sent.append(msg)
+
+    class Client:
+        async def goto_preset(self_inner, preset_id, speed=32):
+            c.gotos.append(preset_id)
+            return True
+
+    c.send = send
+    c._ptz = Client()
+    c.gen_msg_id = lambda: 1
+    return c
+
+
+def _msg(fn, payload, expected=False, mid=7):
+    import json
+
+    return json.dumps(
+        {
+            "functionName": fn,
+            "messageId": mid,
+            "responseExpected": expected,
+            "payload": payload,
+        }
+    ).encode()
+
+
+def test_get_current_position_reply_has_steps_for_protect_to_build_its_home_preset():
+    # Protect crashed ("reading 'pan'") because we echoed the request, which has no steps.
+    c = _home_cam()
+    asyncio.run(
+        c.process(_msg("GetCurrentPosition", {"inDegree": True, "inSteps": True}, True))
+    )
+    reply = c.sent[0]["payload"]
+    assert set(reply["steps"]) >= {"pan", "tilt", "zoom", "focus"}
+    assert set(reply["degrees"]) >= {"pan", "tilt", "zoom"}
+
+
+def test_home_view_goto_drives_the_cameras_default_preset():
+    c = _home_cam()
+    c.args.ptz_home_preset = 3
+    # responseExpected False must still reach the handler (same trap as ContinuousMove).
+    asyncio.run(c.process(_msg("Preset", {"action": "go", "index": -1})))
+    assert c.gotos == [3]
+
+
+def test_home_view_goto_is_found_inside_an_item_too():
+    c = _home_cam()
+    asyncio.run(c.process(_msg("Preset", {"action": "go", "item": {"index": -1}})))
+    assert c.gotos == [0]
+
+
+def test_setting_the_home_preset_does_not_move_the_camera():
+    c = _home_cam()
+    payload = {"action": "set", "item": {"index": -1, "name": "Home view", "pan": 0}}
+    asyncio.run(c.process(_msg("Preset", payload, expected=True)))
+    assert c.gotos == []
+    assert c.sent  # still acknowledged so Protect does not stall
+
+
+def test_other_protect_presets_are_not_mapped():
+    c = _home_cam()
+    asyncio.run(c.process(_msg("Preset", {"action": "go", "index": 2})))
+    assert c.gotos == []
+
+
+def test_goto_preset_sends_topos_and_resets_dedup():
+    cam = FakeCam()
+    cam._last_sent = ("Right", 18)
+    assert asyncio.run(cam.goto_preset(0))
+    call = [c for call in cam.calls for c in call if c["cmd"] == "PtzCtrl"][0]
+    assert call["param"]["op"] == "ToPos" and call["param"]["id"] == 0
+    assert cam._last_sent == (None, None)
