@@ -21,6 +21,9 @@ class RTSPCam(UnifiCamBase):
     REBOOT_COOLDOWN_SEC = 300
     # Movement-gate tracker: boxes must displace before they count.
     AI_TRACK_MATCH_RADIUS = 60  # centre distance to join an existing track
+    # On-demand mode keeps every box, so the tracker's only job is one stable id per object:
+    # a cat covers 70-150 units between reports, which the tight radius split into three.
+    AI_TRACK_MATCH_RADIUS_ENRICH = 250
     AI_TRACK_EXPIRE_SEC = 3.0  # forget a moving track this long after loss
     AI_STATIC_EXPIRE_SEC = 60.0  # remember never-moved spots much longer
     # so an intermittently re-detected building stays suppressed
@@ -442,7 +445,11 @@ class RTSPCam(UnifiCamBase):
             cx = coord[0] + coord[2] / 2
             cy = coord[1] + coord[3] / 2
             track = None
-            best = self.AI_TRACK_MATCH_RADIUS
+            best = (
+                self.AI_TRACK_MATCH_RADIUS_ENRICH
+                if enrich
+                else self.AI_TRACK_MATCH_RADIUS
+            )
             for t in self._ai_tracks:
                 if t["type"] != box.get("type"):
                     continue
