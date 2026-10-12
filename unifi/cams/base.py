@@ -1405,6 +1405,15 @@ class UnifiCamBase(metaclass=ABCMeta):
             path = self._motion_snapshot
         else:
             path = await self.get_snapshot()
+            # The capture process this starts (or restarts) takes a moment to produce
+            # its first frame. A request landing right after adoption/reconnect, before
+            # that frame exists, used to fail outright with no retry; wait briefly for it
+            # instead, bounded well under Protect's own request timeout.
+            if path and not path.exists():
+                for _ in range(25):  # ~5s at 0.2s steps
+                    await asyncio.sleep(0.2)
+                    if path.exists():
+                        break
 
         if path and path.exists():
             async with aiohttp.ClientSession() as session:
