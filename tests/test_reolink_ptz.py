@@ -11,6 +11,8 @@ import argparse
 import asyncio
 import logging
 
+import aiohttp
+
 from unifi.cams.rtsp import RTSPCam
 from unifi.reolink_ptz import ReolinkPtz, plan_move
 
@@ -249,3 +251,62 @@ def test_protect_continuous_move_message_reaches_the_hook_through_process():
     )
     asyncio.run(c.process(msg.encode()))
     assert calls == [(500, -250, 0)]
+
+
+class _Resp:
+    def __init__(self, fail):
+        self.fail = fail
+
+    async def __aenter__(self):
+        if self.fail:
+            raise aiohttp.ServerDisconnectedError()
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def json(self, content_type=None):
+        return [{"code": 0}]
+
+
+def _fake_sessions(monkeypatch, fail_first_post=False):
+    made = []
+
+    class Session:
+        def __init__(self):
+            self.closed = False
+            self.posts = 0
+            made.append(self)
+
+        def post(self, *a, **kw):
+            self.posts += 1
+            return _Resp(fail_first_post and len(made) == 1)
+
+        async def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(aiohttp, "ClientSession", Session)
+    return made
+
+
+def test_commands_share_one_kept_alive_connection(monkeypatch):
+    # A fresh TLS handshake per PtzCtrl took ~420 ms vs ~100 ms reused, so Stop landed
+    # late and quick jogs overshot.
+    made = _fake_sessions(monkeypatch)
+    ptz = ReolinkPtz("cam", "u", "p", LOG)
+
+    async def go():
+        for _ in range(3):
+            await ptz._post("token=t", [])
+        await ptz.close()
+
+    asyncio.run(go())
+    assert len(made) == 1 and made[0].posts == 3 and made[0].closed
+
+
+def test_dropped_connection_reconnects_once(monkeypatch):
+    made = _fake_sessions(monkeypatch, fail_first_post=True)
+    ptz = ReolinkPtz("cam", "u", "p", LOG)
+    res = asyncio.run(ptz._post("token=t", []))
+    assert res == [{"code": 0}]
+    assert len(made) == 2 and made[0].closed
