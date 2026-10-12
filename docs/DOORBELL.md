@@ -83,7 +83,7 @@ mu-law) and sends the result over an ONVIF RTSP backchannel:
 `DESCRIBE` with `Require: www.onvif.org/ver20/backchannel`, `SETUP` of the
 `sendonly` PCMU track over interleaved TCP, `PLAY`, then 20 ms RTP packets. The
 client is plain `asyncio` (`unifi/talkback.py`), including Digest and Basic
-auth, and needs no sidecar. The bridge starts on the first datagram and ends
+auth, and needs no separate service. The bridge starts on the first datagram and ends
 about 3 s after the last.
 
 Notes: Protect also calls `POST api/1.2/snapshot` on the recorded camera

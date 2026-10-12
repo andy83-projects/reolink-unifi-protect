@@ -50,7 +50,7 @@ Every option of the `rtsp` source, generated from the argument parser. **New** m
 
 | Flag | Default | New | What it does |
 |---|---|---|---|
-| `--ai-sink-port` | `0` |  | Port to receive AI box reports from the sidecar |
+| `--ai-sink-port` | `0` |  | Port to receive AI box reports from a standalone sidecar (defaults to loopback 8099 with --ai-sidecar) |
 | `--ai-sidecar` | off | **New** | Run the bundled Baichuan box sidecar (Node, in the image) so events carry the camera's real moving detection boxes and per-object crops. Needs --reolink-ai-host; the standby replica never starts it |
 | `--ai-sidecar-profile` | `main` | **New** | Baichuan stream the boxes are read from. Doorbells carry them on the main stream only |
 | `--ai-sidecar-always-on` | off | **New** | Keep the sidecar's stream open continuously (about 4.5 Mbit/s for a doorbell's main stream) instead of only during detections |
