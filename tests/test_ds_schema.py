@@ -106,3 +106,27 @@ async def test_fresh_process_starts_with_small_ids(cam):
     )
     assert start["eventId"] < 1_000_000
     assert all(d["trackerID"] <= U32_MAX for d in start["descriptors"])
+
+
+async def test_event_envelopes_carry_an_rfc3339_timestamp(cam):
+    from datetime import datetime
+
+    await cam.trigger_motion_start(SmartDetectObjectType.PERSON)
+    await cam.trigger_motion_stop()
+    frames = [m for m in cam.sent if m["functionName"] == "EventSmartDetect"]
+    assert len(frames) == 2
+    for m in frames:
+        # ds rejects an integer here ("expected an RFC 3339 formatted date and time")
+        assert isinstance(m["timeStamp"], str)
+        assert datetime.fromisoformat(m["timeStamp"]).tzinfo is not None
+
+
+def test_handshake_mac_is_the_canonical_12_hex_form(cert):
+    from unifi.core import Core
+
+    args = argparse.Namespace(
+        host="h", token="t", mac="02:4a:5f:b1:3b:03", cert=str(cert)
+    )
+    core = Core(args, camera=None, logger=logging.getLogger("test"))
+    # ds looks the camera up by this header; Protect stores it without colons.
+    assert core._headers()["camera-mac"] == "024A5FB13B03"
