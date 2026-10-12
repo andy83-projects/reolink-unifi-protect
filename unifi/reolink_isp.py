@@ -171,3 +171,20 @@ class ReolinkIsp:
             except Exception as exc:  # noqa: BLE001
                 self._token = None
                 self.logger.warning("Could not apply image settings: %s", exc)
+
+    async def reboot(self) -> bool:
+        """Ask the camera to reboot. It stops answering for about a minute."""
+        async with self._lock:
+            try:
+                res = await self._call([{"cmd": "Reboot", "action": 0, "param": {}}])
+                ok = all(r.get("code") == 0 for r in res)
+                if ok:
+                    self.logger.info("Asked the Reolink camera to reboot")
+                else:
+                    self.logger.warning("Reolink refused the reboot: %s", res)
+                return ok
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("Could not reboot the Reolink camera: %s", exc)
+                return False
+            finally:
+                self._token = None

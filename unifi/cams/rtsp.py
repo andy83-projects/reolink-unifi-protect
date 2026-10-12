@@ -16,6 +16,7 @@ from unifi.reolink_isp import ReolinkIsp
 
 class RTSPCam(UnifiCamBase):
     AI_CLEAR_AFTER_SEC = 2.5
+    REBOOT_COOLDOWN_SEC = 300
     # Movement-gate tracker: boxes must displace before they count.
     AI_TRACK_MATCH_RADIUS = 60  # centre distance to join an existing track
     AI_TRACK_EXPIRE_SEC = 3.0  # forget a moving track this long after loss
@@ -119,6 +120,12 @@ class RTSPCam(UnifiCamBase):
             action="store_true",
             help="Write Protect's image settings (brightness, contrast, WDR, ...)"
             " to the camera when they change (needs --reolink-ai-host)",
+        )
+        parser.add_argument(
+            "--reolink-reboot",
+            action="store_true",
+            help="Reboot the Reolink camera when Protect's restart camera is used"
+            " (needs --reolink-ai-host)",
         )
         parser.add_argument(
             "--reolink-visitor-poll",
@@ -562,9 +569,7 @@ class RTSPCam(UnifiCamBase):
         # Protect owns these values: echo back what it last set, never the camera's.
         return dict(getattr(self, "_isp_state", {}))
 
-    async def change_video_settings(self, options) -> None:
-        if not (getattr(self.args, "reolink_isp", False) and self.args.reolink_ai_host):
-            return
+    def _reolink_client(self) -> ReolinkIsp:
         if not hasattr(self, "_isp"):
             self._isp = ReolinkIsp(
                 self.args.reolink_ai_host,
@@ -573,9 +578,30 @@ class RTSPCam(UnifiCamBase):
                 self.logger,
             )
             self._isp_state = {}
+        return self._isp
+
+    async def change_video_settings(self, options) -> None:
+        if not (getattr(self.args, "reolink_isp", False) and self.args.reolink_ai_host):
+            return
+        client = self._reolink_client()
         self._isp_state.update(options)
         # Reply to Protect now; the camera writes can take seconds.
-        self._isp_task = asyncio.create_task(self._isp.apply(dict(options)))
+        self._isp_task = asyncio.create_task(client.apply(dict(options)))
+
+    async def reboot_camera(self) -> None:
+        """Protect's "restart camera": reboot the Reolink too, if enabled."""
+        if not (
+            getattr(self.args, "reolink_reboot", False) and self.args.reolink_ai_host
+        ):
+            return
+        now = time.monotonic()
+        last = getattr(self, "_last_reboot", None)
+        if last is not None and now - last < self.REBOOT_COOLDOWN_SEC:
+            self.logger.info("Ignoring repeated reboot request from Protect")
+            return
+        self._last_reboot = now
+        # Reply now; the camera takes a moment to answer and then goes away.
+        self._reboot_task = asyncio.create_task(self._reolink_client().reboot())
 
     async def _push_reolink(self) -> None:
         from reolink_aio.api import Host

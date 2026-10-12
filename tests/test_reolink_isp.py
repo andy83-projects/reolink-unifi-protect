@@ -102,3 +102,102 @@ def test_rtspcam_hooks_are_off_without_flag():
     c.args = argparse.Namespace(reolink_isp=False, reolink_ai_host="cam")
     asyncio.run(c.change_video_settings({"brightness": 10}))
     assert not hasattr(c, "_isp")
+
+
+# Reboot wiring. Everything here uses fakes: nothing reaches a camera (conftest.py
+# also fails any test that tries to open a connection beyond this machine).
+
+
+def make_reboot_cam(reboot_flag=True, host="cam"):
+    c = RTSPCam.__new__(RTSPCam)
+    c.args = argparse.Namespace(
+        reolink_reboot=reboot_flag,
+        reolink_ai_host=host,
+        reolink_ai_user="u",
+        reolink_ai_password="p",
+    )
+    c.logger = LOG
+    c.rebooted = []
+
+    class Fake:
+        async def reboot(self_inner):
+            c.rebooted.append(1)
+            return True
+
+    c._isp = Fake()
+    c._isp_state = {}
+    return c
+
+
+async def _reboot_and_settle(c, times=1):
+    for _ in range(times):
+        await c.reboot_camera()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+
+def test_reboot_is_off_without_flag():
+    c = make_reboot_cam(reboot_flag=False)
+    asyncio.run(_reboot_and_settle(c))
+    assert c.rebooted == []
+
+
+def test_reboot_needs_a_camera_host():
+    c = make_reboot_cam(host=None)
+    asyncio.run(_reboot_and_settle(c))
+    assert c.rebooted == []
+
+
+def test_reboot_sent_once_per_cooldown():
+    c = make_reboot_cam()
+    asyncio.run(_reboot_and_settle(c, times=3))
+    assert c.rebooted == [1]
+
+
+def test_reboot_allowed_again_after_cooldown():
+    c = make_reboot_cam()
+    asyncio.run(_reboot_and_settle(c))
+    c._last_reboot -= RTSPCam.REBOOT_COOLDOWN_SEC + 1
+    asyncio.run(_reboot_and_settle(c))
+    assert c.rebooted == [1, 1]
+
+
+def test_client_reboot_sends_only_the_reboot_command():
+    cam = FakeCam({"channel": 0})
+    assert asyncio.run(cam.reboot()) is True
+    assert [c["cmd"] for call in cam.calls for c in call] == ["Login", "Reboot"]
+
+
+def test_client_reboot_reports_a_refusal():
+    cam = FakeCam({"channel": 0}, fail=True)
+    assert asyncio.run(cam.reboot()) is False
+
+
+def test_protect_reboot_message_triggers_hook_and_reconnect():
+    import json
+
+    c = make_reboot_cam()
+    calls = []
+
+    async def hook():
+        calls.append(1)
+
+    c.reboot_camera = hook
+    msg = json.dumps({"functionName": "Reboot", "messageId": 1})
+    assert asyncio.run(c.process(msg.encode())) is True
+    assert calls == [1]
+
+
+def test_network_guard_blocks_real_addresses():
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        try:
+            s.connect(("10.0.1.159", 443))
+        except AssertionError as exc:
+            assert "10.0.1.159" in str(exc)
+        else:
+            raise AssertionError("guard did not block a non-local connect")
+    finally:
+        s.close()
