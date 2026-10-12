@@ -889,6 +889,9 @@ class RTSPCam(UnifiCamBase):
             await self.runner.cleanup()
         if self.sink_runner:
             await self.sink_runner.cleanup()
+        ptz = getattr(self, "_ptz", None)
+        if ptz is not None:
+            await ptz.close()  # reopened lazily if this instance is reused
 
         if self.snapshot_stream:
             self.snapshot_stream.kill()

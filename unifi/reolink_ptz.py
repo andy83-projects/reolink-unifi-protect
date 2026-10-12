@@ -69,6 +69,7 @@ class ReolinkPtz:
         self.logger = logger
         self.channel = channel
         self._token: Optional[str] = None
+        self._session: Optional[aiohttp.ClientSession] = None
         self._lock = asyncio.Lock()
         # (op, speed) of the last command actually sent. Speed is part of the key:
         # Reolink has no speed-only update, so a stronger/weaker push mid-hold in the
@@ -76,12 +77,29 @@ class ReolinkPtz:
         self._last_sent: tuple[Optional[str], Optional[int]] = (None, None)
 
     async def _post(self, query: str, body: list) -> list:
+        # One kept-alive connection: a fresh TLS handshake per command made every
+        # PtzCtrl take ~420 ms against ~100 ms reused, so a Stop landed 300+ ms late
+        # and the camera kept moving (overshoot on quick taps and direction changes).
         url = f"https://{self.host}/cgi-bin/api.cgi?{query}"
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url, json=body, ssl=False, timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                return await resp.json(content_type=None)
+        for attempt in (0, 1):
+            if self._session is None or self._session.closed:
+                self._session = aiohttp.ClientSession()
+            try:
+                async with self._session.post(
+                    url, json=body, ssl=False, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    return await resp.json(content_type=None)
+            except (aiohttp.ServerDisconnectedError, aiohttp.ClientOSError):
+                # The camera drops idle connections: reconnect once.
+                await self.close()
+                if attempt:
+                    raise
+        raise RuntimeError("unreachable")
+
+    async def close(self) -> None:
+        session, self._session = self._session, None
+        if session is not None and not session.closed:
+            await session.close()
 
     async def _login(self) -> None:
         res = await self._post(
