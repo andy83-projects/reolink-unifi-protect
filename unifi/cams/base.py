@@ -202,6 +202,10 @@ class UnifiCamBase(metaclass=ABCMeta):
     async def change_video_settings(self, options) -> None:
         return
 
+    async def reboot_camera(self) -> None:
+        """Called when Protect asks the camera to reboot; override to act."""
+        return
+
     @abstractmethod
     async def get_snapshot(self) -> Path:
         raise NotImplementedError("You need to write this!")
@@ -1512,6 +1516,7 @@ class UnifiCamBase(metaclass=ABCMeta):
             await self.process_upgrade(m)
             return True
         elif fn == "Reboot":
+            await self.reboot_camera()
             return True
 
         if res is None and m.get("responseExpected"):
