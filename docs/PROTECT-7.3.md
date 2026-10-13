@@ -72,6 +72,20 @@ on a Reolink E1 Zoom:
   preset (`--ptz-home-preset`, default 0, the camera's "default") with `PtzCtrl ToPos`.
   Setting the home preset in Protect does not move the camera.
 
+## Spotlight (`--spotlight`)
+
+Protect models a camera's light as `featureFlags.hasFlash` ("internal flash LED") with
+`flashRange`; the short keys on the wire are `flash` and `flashRange`. A camera that
+advertises it gets Protect's light action (Alarm Manager "turn on light"), which sends
+the avclient message `TurnOnColorNightVision` with `spotlightDuration` in seconds and
+expects the light to turn itself off afterwards. With `--spotlight` the proxy advertises
+the flag and, on that message, switches the Reolink's white LED on (`SetWhiteLed`,
+`state` 1, optionally `bright` from `--spotlight-brightness`) and off again after the
+duration (`--spotlight-default-seconds` if Protect sends none). Only `state` and
+`bright` are written, so the camera's own mode, schedule and AI triggers stay as set.
+A newer request replaces the pending switch-off, and shutdown turns the light off.
+Not yet verified end to end from Protect's UI.
+
 ## Real detection boxes (`--ai-sidecar`)
 
 Push events only say "a person is present", so by default an event uses a centred

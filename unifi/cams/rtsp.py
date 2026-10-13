@@ -13,6 +13,7 @@ from aiohttp import web
 
 from unifi.cams.base import SmartDetectObjectType, UnifiCamBase, jpeg_size
 from unifi.reolink_isp import ReolinkIsp
+from unifi.reolink_light import ReolinkLight
 from unifi.reolink_ptz import ReolinkPtz
 
 
@@ -109,6 +110,25 @@ class RTSPCam(UnifiCamBase):
             default=0,
             help="Reolink preset id the camera returns to for Protect's Home View"
             " (0 is the camera's 'default' preset)",
+        )
+        parser.add_argument(
+            "--spotlight",
+            action="store_true",
+            help="Advertise a spotlight so Protect's light action switches the Reolink's"
+            " white LED on for the requested time (needs --reolink-ai-host)",
+        )
+        parser.add_argument(
+            "--spotlight-brightness",
+            type=int,
+            default=None,
+            help="Brightness 0-100 when Protect turns the spotlight on"
+            " (default: keep the camera's own setting)",
+        )
+        parser.add_argument(
+            "--spotlight-default-seconds",
+            type=int,
+            default=15,
+            help="How long the spotlight stays on when Protect gives no duration",
         )
         parser.add_argument(
             "--speaker",
@@ -823,6 +843,36 @@ class RTSPCam(UnifiCamBase):
         elif action == "go":
             self.logger.info(f"Ignoring goto of Protect preset {index}: not mapped")
 
+    async def spotlight(self, duration_s: int) -> None:
+        if not (getattr(self.args, "spotlight", False) and self.args.reolink_ai_host):
+            return
+        light = getattr(self, "_light", None)
+        if light is None:
+            light = self._light = ReolinkLight(
+                self.args.reolink_ai_host,
+                self.args.reolink_ai_user,
+                self.args.reolink_ai_password,
+                self.logger,
+            )
+        seconds = duration_s if duration_s > 0 else self.args.spotlight_default_seconds
+        prev = getattr(self, "_light_task", None)
+        if prev is not None:
+            # A newer request replaces the pending switch-off; wait for the old one to
+            # finish its own "off" so it cannot land after the new "on".
+            prev.cancel()
+            await asyncio.gather(prev, return_exceptions=True)
+        self._light_task = asyncio.create_task(self._spotlight_for(light, seconds))
+
+    async def _spotlight_for(self, light: ReolinkLight, seconds: int) -> None:
+        try:
+            await light.set_spotlight(True, self.args.spotlight_brightness)
+            await asyncio.sleep(seconds)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            # Also on cancel (replaced or shutting down): never leave the light on
+            await asyncio.shield(light.set_spotlight(False))
+
     async def continuous_move(self, x: int, y: int, z: int) -> None:
         if not (getattr(self.args, "ptz", False) and self.args.reolink_ai_host):
             return
@@ -1087,6 +1137,14 @@ class RTSPCam(UnifiCamBase):
         ptz = getattr(self, "_ptz", None)
         if ptz is not None:
             await ptz.close()  # reopened lazily if this instance is reused
+        light_task = getattr(self, "_light_task", None)
+        if light_task is not None:
+            light_task.cancel()
+            await asyncio.gather(light_task, return_exceptions=True)  # light off first
+        light = getattr(self, "_light", None)
+        if light is not None:
+            await light.close()
+            self._light = None
 
         if self.snapshot_stream:
             self.snapshot_stream.kill()
