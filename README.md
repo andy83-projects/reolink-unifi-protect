@@ -43,6 +43,7 @@ list of options is in [docs/FLAGS.md](docs/FLAGS.md).
 | **Events that show up under the Person / Animal / Vehicle filters**: a per-object crop and a full-frame image are announced with every event | (always on) | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
 | **Real detection boxes** from the camera's own AI via the bundled Baichuan sidecar, run and supervised by the proxy, opened only while a detection is in progress | `--ai-sidecar`, `--ai-sidecar-profile`, `--ai-sidecar-always-on` | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
 | **PTZ**: Protect's joystick and zoom drive the camera, **Home View** returns to a camera preset | `--ptz`, `--ptz-home-preset` | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
+| **Spotlight**: Protect's light action switches the Reolink's white LED on for the requested time | `--spotlight`, `--spotlight-brightness`, `--spotlight-default-seconds` | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
 | **Image settings sync**: brightness, contrast, saturation, hue, sharpness, denoise, mirror/flip and WDR changed in Protect are written to the camera | `--reolink-isp` | `unifi/reolink_isp.py` |
 | **Remote reboot**: Protect's "restart camera" also reboots the Reolink (5 minute cooldown) | `--reolink-reboot` | `unifi/cams/rtsp.py` |
 | **One image for everything** (doorbells and plain cameras differ only in flags), Node and the sidecar included | | `Dockerfile.vaapi` |
@@ -160,6 +161,7 @@ The full, generated list is in [docs/FLAGS.md](docs/FLAGS.md); the main ones are
 | `--reolink-visitor-poll` | Fallback: poll `GetEvents` for the button instead of using push |
 | `--ai-sidecar`, `--ai-sidecar-profile`, `--ai-sidecar-always-on` | Run the bundled Baichuan box sidecar: events carry the camera's real moving detection boxes and per-object crops. On-demand by default (stream open only during detections). See [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
 | `--snapshot-url` | Snapshot via the camera's HTTP(S) API instead of a fourth RTSP session (Reolink WiFi cameras limit concurrent RTSP) |
+| `--spotlight`, `--spotlight-brightness`, `--spotlight-default-seconds` | Advertise a spotlight so Protect's light action turns the Reolink's white LED on for the requested time (see [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md)) |
 | `--ptz`, `--ptz-home-preset` | Advertise a pan/tilt/zoom camera so Protect shows its joystick; drive the Reolink from Protect's controls and map Home View to a camera preset (see [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md)) |
 | `--reolink-isp` | Write Protect's image settings (brightness, contrast, WDR, ...) to the camera when they change |
 | `--reolink-reboot` | Reboot the Reolink camera when Protect's restart camera is used |
