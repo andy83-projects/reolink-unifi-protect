@@ -75,5 +75,8 @@ Every option of the `rtsp` source, generated from the argument parser. **New** m
 |---|---|---|---|
 | `--ptz` | off | **New** | Advertise a pan/tilt/zoom camera so Protect shows its PTZ controls |
 | `--ptz-home-preset` | `0` | **New** | Reolink preset id the camera returns to for Protect's Home View (0 is the camera's 'default' preset) |
+| `--spotlight` | off | **New** | Advertise a spotlight so Protect's light action switches the Reolink's white LED on for the requested time (needs --reolink-ai-host) |
+| `--spotlight-brightness` | none | **New** | Brightness 0-100 when Protect turns the spotlight on (default: keep the camera's own setting) |
+| `--spotlight-default-seconds` | `15` | **New** | How long the spotlight stays on when Protect gives no duration |
 | `--reolink-isp` | off | **New** | Write Protect's image settings (brightness, contrast, WDR, ...) to the camera when they change (needs --reolink-ai-host) |
 | `--reolink-reboot` | off | **New** | Reboot the Reolink camera when Protect's restart camera is used (needs --reolink-ai-host) |

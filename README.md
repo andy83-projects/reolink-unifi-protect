@@ -42,7 +42,8 @@ list of options is in [docs/FLAGS.md](docs/FLAGS.md).
 | **UniFi Protect 7.3.x compatibility**: event frames match the strict schema of Protect's new `ds` daemon, so events are recorded again; how to debug `ds` rejections | (always on) | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
 | **Events that show up under the Person / Animal / Vehicle filters**: a per-object crop and a full-frame image are announced with every event | (always on) | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
 | **Real detection boxes** from the camera's own AI via the bundled Baichuan sidecar, run and supervised by the proxy, opened only while a detection is in progress | `--ai-sidecar`, `--ai-sidecar-profile`, `--ai-sidecar-always-on` | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
-| **PTZ**: Protect's joystick and zoom drive the camera, **Home View** returns to a camera preset | `--ptz`, `--ptz-home-preset` | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
+| **PTZ**: Protect's joystick and zoom drive the camera, **Home View** returns to a camera preset | `--spotlight`, `--spotlight-brightness`, `--spotlight-default-seconds` | Advertise a spotlight so Protect's light action turns the Reolink's white LED on for the requested time (see [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md)) |
+| `--ptz`, `--ptz-home-preset` | [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md) |
 | **Image settings sync**: brightness, contrast, saturation, hue, sharpness, denoise, mirror/flip and WDR changed in Protect are written to the camera | `--reolink-isp` | `unifi/reolink_isp.py` |
 | **Remote reboot**: Protect's "restart camera" also reboots the Reolink (5 minute cooldown) | `--reolink-reboot` | `unifi/cams/rtsp.py` |
 | **One image for everything** (doorbells and plain cameras differ only in flags), Node and the sidecar included | | `Dockerfile.vaapi` |

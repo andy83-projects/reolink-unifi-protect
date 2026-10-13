@@ -14,6 +14,7 @@ import logging
 import aiohttp
 
 from unifi.cams.rtsp import RTSPCam
+from unifi.reolink_light import ReolinkLight
 from unifi.reolink_ptz import ReolinkPtz, plan_move
 
 LOG = logging.getLogger("test")
@@ -391,3 +392,141 @@ def test_goto_preset_sends_topos_and_resets_dedup():
     call = [c for call in cam.calls for c in call if c["cmd"] == "PtzCtrl"][0]
     assert call["param"]["op"] == "ToPos" and call["param"]["id"] == 0
     assert cam._last_sent == (None, None)
+
+
+# --- spotlight (Protect's TurnOnColorNightVision) ---
+
+
+class FakeLight:
+    def __init__(self):
+        self.calls = []
+
+    async def set_spotlight(self, on, brightness=None):
+        self.calls.append((on, brightness))
+        return True
+
+    async def close(self):
+        pass
+
+
+def _light_cam(seconds_default=15, brightness=None):
+    c = _home_cam()
+    c.args.spotlight = True
+    c.args.spotlight_brightness = brightness
+    c.args.spotlight_default_seconds = seconds_default
+    return c
+
+
+def test_spotlight_flag_advertises_has_flash():
+    c = _light_cam()
+
+    async def go():
+        return await c.get_feature_flags()
+
+    flags = asyncio.run(go())
+    assert flags["hasFlash"] is True and flags["flash"] is True
+    assert "flash" not in asyncio.run(_home_cam().get_feature_flags())
+
+
+def test_turn_on_color_night_vision_reaches_the_handler_without_a_response_expected():
+    c = _light_cam()
+    seen = []
+
+    async def spot(d):
+        seen.append(d)
+
+    c.spotlight = spot
+    asyncio.run(
+        c.process(_msg("TurnOnColorNightVision", {"spotlightDuration": 7}, False))
+    )
+    assert seen == [7]
+
+
+def test_spotlight_turns_on_then_off_after_the_duration(monkeypatch):
+    c = _light_cam(brightness=60)
+    light = FakeLight()
+    c._light = light
+    slept = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    async def go():
+        await c.spotlight(5)
+        await c._light_task
+
+    asyncio.run(go())
+    assert light.calls == [(True, 60), (False, None)]
+    assert slept == [5]
+
+
+def test_spotlight_zero_duration_uses_the_default(monkeypatch):
+    c = _light_cam(seconds_default=22)
+    c._light = FakeLight()
+    slept = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    async def go():
+        await c.spotlight(0)
+        await c._light_task
+
+    asyncio.run(go())
+    assert slept == [22]
+
+
+def test_new_spotlight_request_replaces_the_old_and_ends_on():
+    c = _light_cam()
+    light = FakeLight()
+    c._light = light
+
+    async def go():
+        await c.spotlight(300)
+        await asyncio.sleep(0)  # let the first one switch on
+        await c.spotlight(300)
+        await asyncio.sleep(0)
+        c._light_task.cancel()
+        await asyncio.gather(c._light_task, return_exceptions=True)
+
+    asyncio.run(go())
+    # on, (old one cancelled -> off), on, (cancelled -> off): never on at the end
+    assert [on for on, _ in light.calls] == [True, False, True, False]
+
+
+def test_spotlight_is_off_without_the_flag():
+    c = _home_cam()
+    asyncio.run(c.spotlight(5))
+    assert not hasattr(c, "_light_task")
+
+
+class FakeLightApi(ReolinkLight):
+    def __init__(self):
+        super().__init__("cam", "u", "p", LOG)
+        self.calls = []
+
+    async def _post(self, query, body):
+        self.calls.append(body)
+        return [
+            (
+                {"code": 0, "value": {"Token": {"name": "t"}}}
+                if c["cmd"] == "Login"
+                else {"code": 0}
+            )
+            for c in body
+        ]
+
+
+def test_set_spotlight_writes_only_state_and_brightness():
+    cam = FakeLightApi()
+    assert asyncio.run(cam.set_spotlight(True, 40))
+    led = [c for call in cam.calls for c in call if c["cmd"] == "SetWhiteLed"][0]
+    assert led["param"]["WhiteLed"] == {"channel": 0, "state": 1, "bright": 40}
+    cam.calls.clear()
+    assert asyncio.run(cam.set_spotlight(False, 40))
+    led = [c for call in cam.calls for c in call if c["cmd"] == "SetWhiteLed"][0]
+    assert led["param"]["WhiteLed"] == {"channel": 0, "state": 0}

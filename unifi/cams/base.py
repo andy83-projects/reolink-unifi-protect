@@ -241,6 +241,10 @@ class UnifiCamBase(metaclass=ABCMeta):
         """Reply payload for GetCurrentPosition, or None to just echo the request."""
         return None
 
+    async def spotlight(self, duration_s: int) -> None:
+        """Called for Protect's TurnOnColorNightVision (light on for duration_s)."""
+        return
+
     async def ptz_preset(self, payload: dict[str, Any]) -> None:
         """Called for Protect's Preset/Home messages (home view is slot -1)."""
         return
@@ -368,6 +372,12 @@ class UnifiCamBase(metaclass=ABCMeta):
         if getattr(self.args, "speaker", False):
             # Protect maps hasSpeaker from the camera's short `speaker` key
             flags["speaker"] = True
+        if getattr(self.args, "spotlight", False):
+            # Protect maps hasFlash/flashRange from `flash`/`flashRange` and then
+            # offers its light action (it sends TurnOnColorNightVision)
+            flags["flash"] = True
+            flags["hasFlash"] = True
+            flags["flashRange"] = 10
         return flags
 
     async def _protect_login(self, session: "aiohttp.ClientSession") -> Optional[str]:
@@ -1609,6 +1619,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                 "ContinuousMove",
                 "Preset",
                 "Home",
+                "TurnOnColorNightVision",
             ]
         ):
             return False
@@ -1666,6 +1677,10 @@ class UnifiCamBase(metaclass=ABCMeta):
                 res = self.gen_response(
                     fn, response_to=m["messageId"], payload=position
                 )
+        elif fn == "TurnOnColorNightVision":
+            payload = m.get("payload") or {}
+            self.logger.info(f"Spotlight request: {json.dumps(payload)}")
+            await self.spotlight(int(payload.get("spotlightDuration") or 0))
         elif fn in ("Preset", "Home"):
             self.logger.info(f"PTZ {fn} message: {json.dumps(m.get('payload') or {})}")
             await self.ptz_preset({"function": fn, **(m.get("payload") or {})})
