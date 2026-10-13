@@ -557,3 +557,43 @@ def test_spotlight_slider_is_ignored_without_the_flag():
     c = _home_cam()
     asyncio.run(c.change_video_settings({"spotlightDuration": 45}))
     assert not hasattr(c, "_spotlight_slider_s")
+
+
+def test_color_night_vision_toggle_sets_the_cameras_auto_mode():
+    c = _light_cam()
+    c.args.reolink_ai_host = "cam"
+    modes = []
+
+    class Light(FakeLight):
+        async def set_auto_mode(self_inner, enabled):
+            modes.append(enabled)
+            return True
+
+    c._light = Light()
+    asyncio.run(c.change_video_settings({"colorNightVision": 1, "brightness": 50}))
+    asyncio.run(c.change_video_settings({"colorNightVision": 0}))
+    asyncio.run(c.change_video_settings({"brightness": 60}))  # untouched: no write
+    assert modes == [True, False]
+
+
+def test_color_night_vision_is_ignored_without_the_spotlight_flag():
+    c = _home_cam()
+    c.args.reolink_ai_host = "cam"
+    asyncio.run(c.change_video_settings({"colorNightVision": 0}))
+    assert not hasattr(c, "_light")
+
+
+def test_set_auto_mode_writes_only_the_mode():
+    cam = FakeLightApi()
+    assert asyncio.run(cam.set_auto_mode(True))
+    assert asyncio.run(cam.set_auto_mode(False))
+    leds = [
+        c["param"]["WhiteLed"]
+        for call in cam.calls
+        for c in call
+        if c["cmd"] == "SetWhiteLed"
+    ]
+    assert leds == [
+        {"channel": 0, "mode": 1},
+        {"channel": 0, "mode": 0},
+    ]

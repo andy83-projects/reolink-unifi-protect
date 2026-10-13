@@ -5,13 +5,19 @@ on light", the Spotlight toggle). Protect then sends an avclient ``TurnOnColorNi
 message with ``spotlightDuration`` in seconds and expects the light to go off by itself
 afterwards. Reolink's ``SetWhiteLed`` takes a persistent ``state``, so the off is ours.
 
-Only ``state`` (and optionally ``bright``) is written: the camera's own mode, schedule and
-AI triggers (``GetWhiteLed``) are left as configured.
+Only ``state`` (and optionally ``bright``) is written for a request. Protect's "Color Night
+Vision" toggle (``colorNightVision`` in ``ChangeIspSettings``) maps to ``mode``: on is the
+camera's own night mode, off disables the automatic light. The camera's schedule, brightness
+and AI triggers (``GetWhiteLed``) are never touched.
 """
 
 from typing import Optional
 
 from unifi.reolink_ptz import ReolinkPtz
+
+# Reolink WhiteLed.mode: 0 off, 1 night mode (the camera's own AI/schedule triggers)
+OFF_MODE = 0
+AUTO_MODE = 1
 
 
 class ReolinkLight(ReolinkPtz):
@@ -50,4 +56,22 @@ class ReolinkLight(ReolinkPtz):
             except Exception as exc:  # noqa: BLE001
                 self._token = None
                 self.logger.warning("Could not switch the spotlight: %s", exc)
+                return False
+
+    async def set_auto_mode(self, enabled: bool) -> bool:
+        """Turn the camera's own automatic spotlight on (night mode) or off (never).
+
+        Only ``mode`` is written, so the camera's schedule, brightness and AI triggers
+        keep whatever they were set to. Never raises.
+        """
+        led = {"channel": self.channel, "mode": AUTO_MODE if enabled else OFF_MODE}
+        async with self._lock:
+            try:
+                ok = await self._api("SetWhiteLed", {"WhiteLed": led})
+                level = self.logger.info if ok else self.logger.warning
+                level("Reolink spotlight auto mode %s: %s", enabled, ok)
+                return ok
+            except Exception as exc:  # noqa: BLE001
+                self._token = None
+                self.logger.warning("Could not set the spotlight mode: %s", exc)
                 return False

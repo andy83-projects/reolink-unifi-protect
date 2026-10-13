@@ -783,6 +783,15 @@ class RTSPCam(UnifiCamBase):
         slider = options.get("spotlightDuration")
         if getattr(self.args, "spotlight", False) and isinstance(slider, int):
             self._spotlight_slider_s = slider
+        cnv = options.get("colorNightVision")
+        if (
+            getattr(self.args, "spotlight", False)
+            and self.args.reolink_ai_host
+            and cnv in (0, 1, True, False)
+        ):
+            # Protect's Color Night Vision toggle is the on/off for the camera's own
+            # automatic spotlight (applied on every settings push, so Protect wins)
+            await self._spotlight_client().set_auto_mode(bool(cnv))
         if not (getattr(self.args, "reolink_isp", False) and self.args.reolink_ai_host):
             return
         client = self._reolink_client()
@@ -848,9 +857,7 @@ class RTSPCam(UnifiCamBase):
         elif action == "go":
             self.logger.info(f"Ignoring goto of Protect preset {index}: not mapped")
 
-    async def spotlight(self, duration_s: int) -> None:
-        if not (getattr(self.args, "spotlight", False) and self.args.reolink_ai_host):
-            return
+    def _spotlight_client(self) -> ReolinkLight:
         light = getattr(self, "_light", None)
         if light is None:
             light = self._light = ReolinkLight(
@@ -859,6 +866,12 @@ class RTSPCam(UnifiCamBase):
                 self.args.reolink_ai_password,
                 self.logger,
             )
+        return light
+
+    async def spotlight(self, duration_s: int) -> None:
+        if not (getattr(self.args, "spotlight", False) and self.args.reolink_ai_host):
+            return
+        light = self._spotlight_client()
         seconds = duration_s
         if seconds <= 0:  # no duration in the request: Protect's slider, then the flag
             seconds = getattr(self, "_spotlight_slider_s", 0) or (
