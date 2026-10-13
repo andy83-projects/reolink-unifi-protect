@@ -128,7 +128,8 @@ class RTSPCam(UnifiCamBase):
             "--spotlight-default-seconds",
             type=int,
             default=15,
-            help="How long the spotlight stays on when Protect gives no duration",
+            help="How long the spotlight stays on when neither the request nor Protect's"
+            " 'turn off after no motion' slider gives a duration",
         )
         parser.add_argument(
             "--speaker",
@@ -778,6 +779,10 @@ class RTSPCam(UnifiCamBase):
         return self._isp
 
     async def change_video_settings(self, options) -> None:
+        # Protect's "Turn off spotlight after no motion for" slider (5-900 s)
+        slider = options.get("spotlightDuration")
+        if getattr(self.args, "spotlight", False) and isinstance(slider, int):
+            self._spotlight_slider_s = slider
         if not (getattr(self.args, "reolink_isp", False) and self.args.reolink_ai_host):
             return
         client = self._reolink_client()
@@ -854,7 +859,11 @@ class RTSPCam(UnifiCamBase):
                 self.args.reolink_ai_password,
                 self.logger,
             )
-        seconds = duration_s if duration_s > 0 else self.args.spotlight_default_seconds
+        seconds = duration_s
+        if seconds <= 0:  # no duration in the request: Protect's slider, then the flag
+            seconds = getattr(self, "_spotlight_slider_s", 0) or (
+                self.args.spotlight_default_seconds
+            )
         prev = getattr(self, "_light_task", None)
         if prev is not None:
             # A newer request replaces the pending switch-off; wait for the old one to

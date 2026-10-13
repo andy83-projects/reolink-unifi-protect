@@ -530,3 +530,30 @@ def test_set_spotlight_writes_only_state_and_brightness():
     assert asyncio.run(cam.set_spotlight(False, 40))
     led = [c for call in cam.calls for c in call if c["cmd"] == "SetWhiteLed"][0]
     assert led["param"]["WhiteLed"] == {"channel": 0, "state": 0}
+
+
+def test_spotlight_slider_value_is_the_default_duration(monkeypatch):
+    c = _light_cam(seconds_default=15)
+    c._light = FakeLight()
+    slept = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    async def go():
+        await c.change_video_settings({"spotlightDuration": 45, "brightness": 50})
+        await c.spotlight(0)  # an alarm without its own duration
+        await c._light_task
+        await c.spotlight(7)  # an alarm with one wins
+        await c._light_task
+
+    asyncio.run(go())
+    assert slept == [45, 7]
+
+
+def test_spotlight_slider_is_ignored_without_the_flag():
+    c = _home_cam()
+    asyncio.run(c.change_video_settings({"spotlightDuration": 45}))
+    assert not hasattr(c, "_spotlight_slider_s")

@@ -81,7 +81,7 @@ the avclient message `TurnOnColorNightVision` with `spotlightDuration` in second
 expects the light to turn itself off afterwards. With `--spotlight` the proxy advertises
 the flag and, on that message, switches the Reolink's white LED on (`SetWhiteLed`,
 `state` 1, optionally `bright` from `--spotlight-brightness`) and off again after the
-duration (`--spotlight-default-seconds` if Protect sends none). Only `state` and
+duration. A request without one uses the value of Protect's Enhancer slider "Turn off spotlight after no motion for" (`spotlightDuration`, 5 to 900 s, sent in `ChangeIspSettings`), then `--spotlight-default-seconds`. Protect's Color Night Vision toggle (`colorNightVision`) is acknowledged but not mapped to the camera. Only `state` and
 `bright` are written, so the camera's own mode, schedule and AI triggers stay as set.
 A newer request replaces the pending switch-off, and shutdown turns the light off.
 Not yet verified end to end from Protect's UI.
