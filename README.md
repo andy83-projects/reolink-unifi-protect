@@ -59,9 +59,11 @@ list of options is in [docs/FLAGS.md](docs/FLAGS.md).
 
 Controller: **UniFi Protect 7.1.87** (upstream author), **7.2.105** and **7.3.70**, all on a UDM Pro.
 
+**`--reolink-reboot` confirmed on hardware (2026-10-14):** triggering "restart camera" in Protect's
+UI does reboot the real physical Reolink, as expected. Previously only unit-tested.
+
 Known gaps, so nobody assumes more than was checked:
 
-- `--reolink-reboot` is unit-tested but a live reboot from Protect has not been triggered on hardware.
 - `--reolink-isp`: the camera API accepted the values we send (HDR/WDR, brightness and friends were written and
   restored), but Protect's slider-to-camera mapping has not been verified setting by setting, and the
   mirror/flip direction is unconfirmed.
