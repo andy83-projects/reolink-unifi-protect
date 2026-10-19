@@ -27,6 +27,8 @@ Every option of the `rtsp` source, generated from the argument parser. **New** m
 | `--lo-h265-transcode` | off |  | QSV-transcode the medium/low channels to H.265 |
 | `--lo-transcode-bitrate` | `1M` |  | Bitrate for --lo-h265-transcode |
 | `--lo-scale` | off | **New** | With --lo-h265-transcode, scale the medium/low channels to --lo-width x --lo-height on the iGPU, so all channels can come from the camera's main stream (one stream from the camera) |
+| `--lo-audio-args` | `-c:a copy` | **New** | Audio args for the --lo-h265-transcode channels. Re-encode (e.g. `-ar 16000 -ac 1 -codec:a aac -b:a 32k`) when copied audio stalls ffmpeg 7's FLV muxer |
+| `--no-audio` | off | **New** | Send video only on every channel (for cameras whose audio timestamps stall the FLV muxer) |
 | `--source`, `-s` |  |  | Source(s) for up to three streams in order of descending quality |
 | `--http-api` | `0` |  | Specify a port number to enable the HTTP API (default: disabled) |
 | `--snapshot-url`, `-i` |  |  | HTTP endpoint to fetch snapshot image from |

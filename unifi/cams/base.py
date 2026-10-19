@@ -199,6 +199,19 @@ class UnifiCamBase(metaclass=ABCMeta):
             help="Bitrate for --lo-h265-transcode",
         )
         parser.add_argument(
+            "--lo-audio-args",
+            default="-c:a copy",
+            help="Audio args for the --lo-h265-transcode channels. Re-encode"
+            " (e.g. '-ar 16000 -ac 1 -codec:a aac -b:a 32k') when copied audio"
+            " stalls ffmpeg 7's FLV muxer",
+        )
+        parser.add_argument(
+            "--no-audio",
+            action="store_true",
+            help="Send video only on every channel (for cameras whose audio"
+            " timestamps stall the FLV muxer)",
+        )
+        parser.add_argument(
             "--lo-scale",
             action="store_true",
             help="With --lo-h265-transcode, scale the medium/low channels to"
@@ -298,6 +311,16 @@ class UnifiCamBase(metaclass=ABCMeta):
         )
 
     def get_extra_ffmpeg_args(self, stream_index: str = "") -> str:
+        args = self._extra_ffmpeg_args(stream_index)
+        if getattr(self.args, "no_audio", False):
+            # Seen on Reolink Elite Floodlight firmware v3.2.0.5607: its AAC
+            # timestamps sit ~10 s apart from the video's, so the FLV muxer
+            # held every video packet waiting to interleave audio that never
+            # lined up, and Protect timed each channel out after 10 s.
+            args += " -an"
+        return args
+
+    def _extra_ffmpeg_args(self, stream_index: str = "") -> str:
         if self._lo_h265_transcoding(stream_index):
             # Same dimensions in and out — no scaler, decode straight
             # into hevc_qsv on the iGPU.
@@ -314,9 +337,10 @@ class UnifiCamBase(metaclass=ABCMeta):
                 if getattr(self.args, "lo_scale", False)
                 else ""
             )
+            audio = getattr(self.args, "lo_audio_args", None) or "-c:a copy"
             return (
                 f"{scale}-c:v hevc_qsv -b:v {self.args.lo_transcode_bitrate}"
-                f" -g {lo_fps} -c:a copy"
+                f" -g {lo_fps} {audio}"
             )
         # Post-input (encode) slot: scale + encode H.264, both on the iGPU.
         if self._hw_transcoding(stream_index):
