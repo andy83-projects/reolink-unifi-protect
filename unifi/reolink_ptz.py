@@ -62,12 +62,15 @@ class ReolinkPtz:
         password: str,
         logger: logging.Logger,
         channel: int = 0,
+        scheme: str = "https",
     ) -> None:
         self.host = host
         self.user = user
         self.password = password
         self.logger = logger
         self.channel = channel
+        # Many installs turn the camera's HTTPS off (Reolink's TLS is flaky).
+        self.scheme = scheme
         self._token: Optional[str] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self._lock = asyncio.Lock()
@@ -80,7 +83,7 @@ class ReolinkPtz:
         # One kept-alive connection: a fresh TLS handshake per command made every
         # PtzCtrl take ~420 ms against ~100 ms reused, so a Stop landed 300+ ms late
         # and the camera kept moving (overshoot on quick taps and direction changes).
-        url = f"https://{self.host}/cgi-bin/api.cgi?{query}"
+        url = f"{self.scheme}://{self.host}/cgi-bin/api.cgi?{query}"
         for attempt in (0, 1):
             if self._session is None or self._session.closed:
                 self._session = aiohttp.ClientSession()

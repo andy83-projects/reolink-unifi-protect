@@ -14,6 +14,10 @@ Mapping (Protect 0-100 sliders to Reolink 0-255, where 50 is the 128 midpoint):
 
 import asyncio
 import logging
+import os
+import time
+import urllib.parse
+from pathlib import Path
 from typing import Any, Optional
 
 import aiohttp
@@ -75,18 +79,23 @@ class ReolinkIsp:
         password: str,
         logger: logging.Logger,
         channel: int = 0,
+        scheme: str = "https",
     ) -> None:
         self.host = host
         self.user = user
         self.password = password
         self.logger = logger
         self.channel = channel
+        self.scheme = scheme
         self._token: Optional[str] = None
         self._lock = asyncio.Lock()
         self._applied: dict[str, Any] = {}
 
+    def _url(self, query: str) -> str:
+        return f"{self.scheme}://{self.host}/cgi-bin/api.cgi?{query}"
+
     async def _post(self, query: str, body: list) -> list:
-        url = f"https://{self.host}/cgi-bin/api.cgi?{query}"
+        url = self._url(query)
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url, json=body, ssl=False, timeout=aiohttp.ClientTimeout(total=15)
@@ -188,3 +197,46 @@ class ReolinkIsp:
                 return False
             finally:
                 self._token = None
+
+    SNAP_TIMEOUT = aiohttp.ClientTimeout(total=10, sock_connect=5)
+
+    async def snapshot(self, dst: Path) -> bool:
+        """Save a JPEG from the camera to dst, logged in with a token.
+
+        A ``--snapshot-url`` with ``user=``/``password=`` in the query fails on recent
+        firmware whenever the password has special characters, even percent-encoded;
+        the token login takes the password in the request body and always works.
+        """
+        try:
+            for _attempt in (0, 1):
+                if self._token is None:
+                    await self._login()
+                query = urllib.parse.urlencode(
+                    {
+                        "cmd": "Snap",
+                        "channel": self.channel,
+                        "rs": int(time.time() * 1000),  # cache buster
+                        "token": self._token,
+                    }
+                )
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        self._url(query), ssl=False, timeout=self.SNAP_TIMEOUT
+                    ) as resp:
+                        body = await resp.read()
+                if body[:2] == b"\xff\xd8":
+                    # Atomic replace: readers must never see a half-written JPEG.
+                    tmp = dst.with_name(dst.name + ".part")
+                    tmp.write_bytes(body)
+                    os.replace(tmp, dst)
+                    return True
+                # A JSON error instead of an image: the token expired; log in again.
+                self._token = None
+            self.logger.warning("Reolink snapshot failed: camera returned no image")
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            self.logger.warning("Reolink snapshot failed: %s", type(exc).__name__)
+        except (KeyError, IndexError, TypeError, ValueError):
+            # _login could not find a token in the reply: wrong credentials.
+            self._token = None
+            self.logger.warning("Reolink snapshot failed: login rejected")
+        return False

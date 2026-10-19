@@ -52,7 +52,7 @@ class RTSPCam(UnifiCamBase):
             if not i < len(self.args.source):
                 i = -1
             self.stream_source[stream_index] = self.args.source[i]
-        if not self.args.snapshot_url:
+        if not self._http_snapshots():
             self.start_snapshot_stream()
 
     @classmethod
@@ -168,6 +168,19 @@ class RTSPCam(UnifiCamBase):
             " (needs --reolink-ai-host)",
         )
         parser.add_argument(
+            "--reolink-scheme",
+            default="https",
+            choices=["https", "http"],
+            help="Scheme for the camera's web API on --reolink-ai-host (use http when"
+            " the camera's HTTPS is turned off)",
+        )
+        parser.add_argument(
+            "--reolink-snapshot",
+            action="store_true",
+            help="Fetch snapshots from --reolink-ai-host with a token login instead of"
+            " --snapshot-url; works with passwords that break user/password URLs",
+        )
+        parser.add_argument(
             "--reolink-visitor-poll",
             action="store_true",
             help="Poll GetEvents on --reolink-ai-host for doorbell button presses",
@@ -275,10 +288,30 @@ class RTSPCam(UnifiCamBase):
                 cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True
             )
 
+    def _reolink_snapshots(self) -> bool:
+        return bool(
+            getattr(self.args, "reolink_snapshot", False)
+            and getattr(self.args, "reolink_ai_host", None)
+        )
+
+    def _http_snapshots(self) -> bool:
+        """Snapshots are fetched per request, not read from a 4th RTSP session."""
+        return bool(
+            getattr(self.args, "snapshot_url", None) or self._reolink_snapshots()
+        )
+
+    async def _fetch_snapshot(self, dst: Path) -> bool:
+        if self._reolink_snapshots():
+            return await self._reolink_client().snapshot(dst)
+        return await self.fetch_to_file(self.args.snapshot_url, dst)
+
+    def _reolink_scheme(self) -> str:
+        return getattr(self.args, "reolink_scheme", None) or "https"
+
     async def get_snapshot(self) -> Path:
         img_file = Path(self.snapshot_dir, "screen.jpg")
-        if self.args.snapshot_url:
-            await self.fetch_to_file(self.args.snapshot_url, img_file)
+        if self._http_snapshots():
+            await self._fetch_snapshot(img_file)
         else:
             self.start_snapshot_stream()
         return img_file
@@ -686,8 +719,8 @@ class RTSPCam(UnifiCamBase):
         """
         fetched = Path(self.snapshot_dir, f"crop_src_{tracker_id}.jpg")
         try:
-            if self.args.snapshot_url:
-                if not await self.fetch_to_file(self.args.snapshot_url, fetched):
+            if self._http_snapshots():
+                if not await self._fetch_snapshot(fetched):
                     return
                 src = fetched
             else:
@@ -776,6 +809,7 @@ class RTSPCam(UnifiCamBase):
                 self.args.reolink_ai_user,
                 self.args.reolink_ai_password,
                 self.logger,
+                scheme=self._reolink_scheme(),
             )
             self._isp_state = {}
         return self._isp
@@ -823,6 +857,7 @@ class RTSPCam(UnifiCamBase):
                 self.args.reolink_ai_user,
                 self.args.reolink_ai_password,
                 self.logger,
+                scheme=self._reolink_scheme(),
             )
         return self._ptz
 
@@ -867,6 +902,7 @@ class RTSPCam(UnifiCamBase):
                 self.args.reolink_ai_user,
                 self.args.reolink_ai_password,
                 self.logger,
+                scheme=self._reolink_scheme(),
             )
         return light
 
@@ -1068,7 +1104,8 @@ class RTSPCam(UnifiCamBase):
                 "password": self.args.reolink_ai_password,
             }
         )
-        return f"https://{self.args.reolink_ai_host}/cgi-bin/api.cgi?{query}"
+        host = self.args.reolink_ai_host
+        return f"{self._reolink_scheme()}://{host}/cgi-bin/api.cgi?{query}"
 
     async def _poll_reolink_visitor(self) -> None:
         url = self._reolink_api_url("GetEvents")

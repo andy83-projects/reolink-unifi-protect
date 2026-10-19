@@ -80,3 +80,5 @@ Every option of the `rtsp` source, generated from the argument parser. **New** m
 | `--spotlight-default-seconds` | `15` | **New** | How long the spotlight stays on when neither the request nor Protect's 'turn off after no motion' slider gives a duration |
 | `--reolink-isp` | off | **New** | Write Protect's image settings (brightness, contrast, WDR, ...) to the camera when they change (needs --reolink-ai-host) |
 | `--reolink-reboot` | off | **New** | Reboot the Reolink camera when Protect's restart camera is used (needs --reolink-ai-host) |
+| `--reolink-scheme` | `https` | **New** | Scheme for the camera's web API on --reolink-ai-host (use `http` when the camera's HTTPS is turned off) |
+| `--reolink-snapshot` | off | **New** | Fetch snapshots from --reolink-ai-host with a token login instead of --snapshot-url; works with passwords that break user/password URLs |

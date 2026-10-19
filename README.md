@@ -167,6 +167,8 @@ The full, generated list is in [docs/FLAGS.md](docs/FLAGS.md); the main ones are
 | `--ptz`, `--ptz-home-preset` | Advertise a pan/tilt/zoom camera so Protect shows its joystick; drive the Reolink from Protect's controls and map Home View to a camera preset (see [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md)) |
 | `--reolink-isp` | Write Protect's image settings (brightness, contrast, WDR, ...) to the camera when they change |
 | `--reolink-reboot` | Reboot the Reolink camera when Protect's restart camera is used |
+| `--reolink-scheme http` | For cameras with HTTPS turned off: the image-settings, spotlight, PTZ, reboot and snapshot calls use plain HTTP |
+| `--reolink-snapshot` | Snapshots through a token login (password in the request body) instead of `--snapshot-url`, whose `password=` query parameter fails on recent firmware when the password has special characters |
 
 ## Doorbells, push events and two-way audio
 
