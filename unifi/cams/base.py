@@ -198,6 +198,13 @@ class UnifiCamBase(metaclass=ABCMeta):
             default="1M",
             help="Bitrate for --lo-h265-transcode",
         )
+        parser.add_argument(
+            "--lo-scale",
+            action="store_true",
+            help="With --lo-h265-transcode, scale the medium/low channels to"
+            " --lo-width x --lo-height on the iGPU, so all channels can come"
+            " from the camera's main stream (one stream from the camera)",
+        )
 
     async def _run(self, ws) -> None:
         self._session = ws
@@ -299,8 +306,16 @@ class UnifiCamBase(metaclass=ABCMeta):
             # 8+s of video per event thumb (10-25s, queueing) — the app
             # then falls back to a stale full-frame snapshot.
             lo_fps = getattr(self.args, "lo_fps", None) or 30
+            # --lo-scale: the lo channels are cut from the main stream, so the
+            # camera is only ever asked for one stream (Wi-Fi cameras cannot
+            # carry main and sub at once); vpp_qsv scales on the iGPU.
+            scale = (
+                f'-vf "vpp_qsv=w={self.args.lo_width}:h={self.args.lo_height}" '
+                if getattr(self.args, "lo_scale", False)
+                else ""
+            )
             return (
-                f"-c:v hevc_qsv -b:v {self.args.lo_transcode_bitrate}"
+                f"{scale}-c:v hevc_qsv -b:v {self.args.lo_transcode_bitrate}"
                 f" -g {lo_fps} -c:a copy"
             )
         # Post-input (encode) slot: scale + encode H.264, both on the iGPU.
