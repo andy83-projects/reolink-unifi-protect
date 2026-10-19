@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import signal
 import ssl
@@ -1807,7 +1808,7 @@ class UnifiCamBase(metaclass=ABCMeta):
             cmd = (
                 "ffmpeg -nostdin -loglevel error -y"
                 f" {self.get_base_ffmpeg_args(stream_index)} -rtsp_transport"
-                f' {self.args.rtsp_transport} -i "{source}"'
+                f" {self.args.rtsp_transport} -i {shlex.quote(source)}"
                 f" {self.get_extra_ffmpeg_args(stream_index)} -metadata"
                 f" streamName={stream_name} -f flv - | {hevc_filter}{sys.executable} -m"
                 " unifi.clock_sync"
