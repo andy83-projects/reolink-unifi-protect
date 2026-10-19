@@ -1010,6 +1010,17 @@ class RTSPCam(UnifiCamBase):
             delay = min(delay * 2, max_delay)
 
     async def _apply_ai_states(self, states: dict, force_clear: bool = False) -> None:
+        # Every push event runs this in its own task, and starting an event awaits a
+        # camera snapshot and a crop. Without the lock a "clear" arriving during that
+        # wait saw no active detection and was dropped, leaving the event open until
+        # the 90 s expiry. Serialised, events apply in arrival order.
+        lock = self.__dict__.setdefault("_ai_states_lock", asyncio.Lock())
+        async with lock:
+            await self._apply_ai_states_locked(states, force_clear)
+
+    async def _apply_ai_states_locked(
+        self, states: dict, force_clear: bool = False
+    ) -> None:
         # Same decision as _poll_reolink_ai, fed by Baichuan push instead of GetAiState.
         classes = [
             ("people", SmartDetectObjectType.PERSON),
