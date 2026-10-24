@@ -134,12 +134,18 @@ class UnifiCamBase(metaclass=ABCMeta):
         parser.add_argument(
             "--hw-transcode",
             action="store_true",
-            help="Hardware-transcode video to H.264 via Intel QSV (iGPU)",
+            help="Hardware-transcode the high stream to H.264 using --hw-backend",
+        )
+        parser.add_argument(
+            "--hw-backend",
+            default="qsv",
+            choices=["qsv", "vaapi"],
+            help="Hardware backend: qsv for Intel (default), vaapi for AMD/Mesa",
         )
         parser.add_argument(
             "--hw-device",
             default="/dev/dri/renderD128",
-            help="Intel render node for --hw-transcode",
+            help="DRM render node for hardware transcoding",
         )
         parser.add_argument(
             "--transcode-width",
@@ -151,7 +157,7 @@ class UnifiCamBase(metaclass=ABCMeta):
             "--transcode-height",
             default=776,
             type=int,
-            help="Output height for --hw-transcode (vpp_qsv needs both explicitly)",
+            help="Output height for --hw-transcode",
         )
         parser.add_argument(
             "--transcode-bitrate",
@@ -192,7 +198,7 @@ class UnifiCamBase(metaclass=ABCMeta):
         parser.add_argument(
             "--lo-h265-transcode",
             action="store_true",
-            help="QSV-transcode the medium/low channels to H.265",
+            help="Hardware-transcode the medium/low channels to H.265 using --hw-backend",
         )
         parser.add_argument(
             "--lo-transcode-bitrate",
@@ -282,6 +288,9 @@ class UnifiCamBase(metaclass=ABCMeta):
             "video3",
         )
 
+    def _hw_backend(self) -> str:
+        return getattr(self.args, "hw_backend", "qsv")
+
     def _emits_h265(self, stream_index: str = "") -> bool:
         # Channels whose FLV output carries HEVC and therefore needs the
         # unifi.hevc_flv rewrite before clock_sync.
@@ -294,6 +303,25 @@ class UnifiCamBase(metaclass=ABCMeta):
         )
 
     def get_extra_ffmpeg_args(self, stream_index: str = "") -> str:
+        if self._hw_backend() == "vaapi":
+            if self._lo_h265_transcoding(stream_index):
+                # Keep the substream's size; normalize 10-bit input to the
+                # 8-bit surfaces used by the HEVC Main encoder.
+                lo_fps = getattr(self.args, "lo_fps", None) or 30
+                return (
+                    '-vf "scale_vaapi=format=nv12" -c:v hevc_vaapi'
+                    f" -b:v {self.args.lo_transcode_bitrate} -g {lo_fps} -bf 0"
+                    " -ar 16000 -ac 1 -codec:a aac -b:a 32k"
+                )
+            if self._hw_transcoding(stream_index):
+                hi_fps = getattr(self.args, "hi_fps", None) or 30
+                return (
+                    f'-vf "scale_vaapi=w={self.args.transcode_width}'
+                    f':h={self.args.transcode_height}:format=nv12"'
+                    f" -c:v h264_vaapi -b:v {self.args.transcode_bitrate}"
+                    f" -g {hi_fps} -bf 0"
+                    " -ar 16000 -ac 1 -codec:a aac -b:a 32k"
+                )
         if self._lo_h265_transcoding(stream_index):
             # Same dimensions in and out — no scaler, decode straight
             # into hevc_qsv on the iGPU.
@@ -330,7 +358,7 @@ class UnifiCamBase(metaclass=ABCMeta):
         # Vocabulary matched to a real G5's measured hello (rjmotion/finch):
         # plural key names, mic as an int, capability booleans alongside.
         codecs = ["h264"]
-        if getattr(self.args, "hi_codec", "h264") == "h265":
+        if self._emits_h265("video1") or self._lo_h265_transcoding("video2"):
             codecs.append("h265")
         flags = {
             "mic": 1,
@@ -989,6 +1017,12 @@ class UnifiCamBase(metaclass=ABCMeta):
         )
 
     async def process_video_settings(self, msg: AVClientRequest) -> AVClientResponse:
+        # Advertise the encoded output, which may differ from the camera source.
+        transcode_hi = self._hw_transcoding("video1")
+        hi_codec = "h264" if transcode_hi else self.args.hi_codec
+        hi_width = self.args.transcode_width if transcode_hi else self.args.hi_width
+        hi_height = self.args.transcode_height if transcode_hi else self.args.hi_height
+        lo_codec = "h265" if self._lo_h265_transcoding("video2") else self.args.lo_codec
         vid_dst = {
             "video1": ["file:///dev/null"],
             "video2": ["file:///dev/null"],
@@ -1042,7 +1076,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                     "hdrMode": 0,
                     "lowDelay": False,
                     "videoMode": "default",
-                    "videoCodec": self.args.hi_codec,
+                    "videoCodec": hi_codec,
                     "mjpg": {
                         "avSerializer": {
                             "destinations": [
@@ -1105,7 +1139,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                         "enabled": True,
                         "fps": self.args.hi_fps,
                         "gopModel": 0,
-                        "height": self.args.hi_height,
+                        "height": hi_height,
                         "horizontalFlip": False,
                         "isCbr": False,
                         "maxFps": 30,
@@ -1116,7 +1150,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                         "sourceId": 0,
                         "streamId": 1,
                         "streamOrdinal": 0,
-                        "type": self.args.hi_codec,
+                        "type": hi_codec,
                         "validBitrateRangeMax": 16000000,
                         "validBitrateRangeMin": 32000,
                         "validFpsValues": [
@@ -1139,7 +1173,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                             30,
                         ],
                         "verticalFlip": False,
-                        "width": self.args.hi_width,
+                        "width": hi_width,
                     },
                     "video2": {
                         "M": 1,
@@ -1178,7 +1212,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                         "sourceId": 1,
                         "streamId": 2,
                         "streamOrdinal": 1,
-                        "type": self.args.lo_codec,
+                        "type": lo_codec,
                         "validBitrateRangeMax": 1500000,
                         "validBitrateRangeMin": 32000,
                         "validFpsValues": [
@@ -1240,7 +1274,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                         "sourceId": 2,
                         "streamId": 4,
                         "streamOrdinal": 2,
-                        "type": self.args.lo_codec,
+                        "type": lo_codec,
                         "validBitrateRangeMax": 750000,
                         "validBitrateRangeMin": 32000,
                         "validFpsValues": [
@@ -1821,17 +1855,20 @@ class UnifiCamBase(metaclass=ABCMeta):
         except subprocess.CalledProcessError:
             self.logger.exception("Could not check for ffmpeg options")
 
-        # Pre-input (decode) slot: hardware-decode HEVC on the iGPU via QSV so
-        # frames stay on the GPU for vpp_qsv + h264_qsv (no CPU round-trip).
+        # Keep decoded frames on the selected GPU for scaling and encoding.
         prefix = ""
         if self._hw_transcoding(stream_index) or self._lo_h265_transcoding(
             stream_index
         ):
-            # NOTE: do NOT pin `-c:v hevc_qsv` here. The hi source is HEVC, but
-            # if this stream ever carries H.264 (e.g. a sub-stream fallback),
-            # forcing the HEVC decoder fails with "Function not implemented".
-            # `-hwaccel qsv` alone lets ffmpeg pick the right QSV decoder.
-            prefix = f"-hwaccel qsv -qsv_device {self.args.hw_device} "
+            device = shlex.quote(self.args.hw_device)
+            if self._hw_backend() == "vaapi":
+                prefix = (
+                    f"-hwaccel vaapi -hwaccel_device {device}"
+                    " -hwaccel_output_format vaapi "
+                )
+            else:
+                # Let ffmpeg select the decoder for either H.264 or HEVC.
+                prefix = f"-hwaccel qsv -qsv_device {device} "
         return prefix + " ".join(base_args)
 
     async def start_video_stream(

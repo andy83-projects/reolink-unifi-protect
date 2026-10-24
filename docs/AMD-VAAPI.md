@@ -1,0 +1,137 @@
+# AMD GPU encoding with VA-API
+
+`--hw-backend vaapi` selects the Mesa VA-API backend for AMD GPUs on Linux.
+Enable encoding separately with `--hw-transcode` or `--lo-h265-transcode`.
+Without those flags, streams keep their configured passthrough/audio behavior.
+The default backend remains Intel `qsv` for existing deployments.
+
+This branch starts from main with the fixes from PRs #1–#3. It does not include
+the pending HTTP, Debian runtime, or lower-stream scaling/audio options from
+PRs #4–#6.
+
+## Hardware and image
+
+The development host is a Beelink SER5 with an AMD Ryzen 7 5825U, PCI device
+`1002:15e7` (Barcelo). SER5 variants differ; inspect the device instead of
+assuming every SER5 has the same codec support. The host must provide a working
+`amdgpu` kernel driver and a DRM render node such as `/dev/dri/renderD128`.
+
+`Dockerfile.vaapi` installs both Mesa's AMD video driver and the existing Intel
+driver. It lets libva select the driver from the device. It no longer forces
+`LIBVA_DRIVER_NAME=iHD` on AMD hardware. For AMD, an explicit container setting
+of `LIBVA_DRIVER_NAME=radeonsi` is also supported. Remove any inherited `iHD`
+override when using AMD. ROCm is not needed for this video path.
+
+The Node build stage uses `node:22-bookworm-slim` so its executable remains
+compatible with the Ubuntu 24.04 runtime's glibc. This does not change the
+runtime to Debian or bring in PR #5's FFmpeg upgrade.
+
+## High stream: H.264 encoding
+
+Append these flags after the `rtsp` subcommand and the existing source options:
+
+```text
+--hw-backend vaapi
+--hw-device /dev/dri/renderD128
+--hw-transcode
+--transcode-width 1280
+--transcode-height 720
+--transcode-bitrate 4M
+--hi-fps 20
+```
+
+Set `--hi-fps` to the source's actual frame rate; the scaler does not change
+frame rate. The high stream is decoded and scaled on the GPU and encoded with
+`h264_vaapi`. Protect is advertised the encoded H.264 codec and output size,
+even if the input camera stream has a different codec or dimensions. Lower
+channels keep their own source streams and configured passthrough behavior.
+
+The VA-API path uses NV12 (8-bit) surfaces, no B-frames, and approximately
+one-second GOPs at the advertised frame rate. Audio is encoded to mono AAC at
+16 kHz / 32 kbit/s. Audio encoding runs on the CPU.
+
+## Lower streams: H.265 encoding
+
+To encode video2/video3 using the AMD GPU, add:
+
+```text
+--hw-backend vaapi
+--lo-h265-transcode
+--lo-transcode-bitrate 1M
+```
+
+The lower streams use `hevc_vaapi`, keep their source dimensions, and pass
+through the existing UniFi HEVC FLV rewriter. Set `--lo-width`, `--lo-height`,
+and `--lo-fps` to match the lower input streams. Their advertised codec becomes
+H.265 automatically. This path also encodes audio to mono AAC at 16 kHz.
+
+These options do not consolidate RTSP sessions or provide the pending
+`--lo-scale` feature from #6. A shared RTSP relay is needed if multiple proxy
+channels must share one upstream connection to a camera. Enabling H.265 still
+requires a compatible Protect camera identity/capability configuration.
+
+## Kubernetes device access
+
+Expose a render device and allow the container user to open it. A standalone
+validation pod can use the AMD device plugin:
+
+```yaml
+resources:
+  limits:
+    amd.com/gpu: 1
+env:
+  - name: LIBVA_DRIVER_NAME
+    value: radeonsi
+```
+
+Schedule it on a node advertising that resource. A GPU request is reserved
+even when a replica is on standby. With one advertised GPU per node, applying
+this request to every camera/standby replica can leave pods unschedulable.
+
+For a cluster deliberately sharing one video engine across several camera
+pods, configure device sharing and render-group permissions using the cluster's
+supported method. For example, the existing shared-device arrangement can
+mount the node's `/dev/dri`:
+
+```yaml
+volumeMounts:
+  - name: dri
+    mountPath: /dev/dri
+# In the pod's volumes list:
+volumes:
+  - name: dri
+    hostPath:
+      path: /dev/dri
+      type: Directory
+```
+
+The host/container device policy must also permit DRM device access. A
+non-root container needs the node's render-group GID in its supplemental
+groups. Select a GPU-capable node; a device path alone does not establish codec
+support. These are configuration examples, not a deployment change.
+
+## Validation without a camera
+
+The Container check workflow builds the image without publishing it and checks
+Python imports, Node and sidecar loading, the Mesa driver file, and FFmpeg's
+VA-API encoders. This checks userspace, not physical GPU access.
+
+On a GPU-enabled Linux container, run:
+
+```sh
+sh /app/scripts/vaapi-smoke-test.sh /dev/dri/renderD128
+```
+
+The script prints `vainfo`, creates short synthetic H.264 and HEVC clips,
+hardware-decodes each, and exercises high-stream H.264 scaling/encoding and
+lower-stream H.265 encoding. It probes and software-decodes each result. It
+does not access cameras or Protect and removes its temporary files afterward.
+Frame-rate, resolution and concurrent-session limits still depend on the GPU,
+firmware and Mesa driver. This is not a performance benchmark or a validation
+of every camera resolution.
+
+Physical-camera/Protect integration and a staged rollout remain separate from
+these checks. Keep the currently deployed image available for rollback.
+
+References: [FFmpeg VA-API encoders](https://ffmpeg.org/ffmpeg-codecs.html#VAAPI-encoders),
+[Debian Mesa driver files](https://packages.debian.org/trixie/amd64/mesa-va-drivers/filelist).
