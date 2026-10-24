@@ -262,8 +262,10 @@ class UnifiCamBase(metaclass=ABCMeta):
     def redact_secrets(text: str) -> str:
         # `docker logs` is shared freely; stream URLs carry the camera
         # password (rtsp://user:pass@host), so scrub credentials before any
-        # command line or URL is logged.
-        return re.sub(r"//[^/@\s\"]+@", "//***:***@", text)
+        # command line or URL is logged. Reolink API URLs carry it as a query
+        # parameter instead.
+        text = re.sub(r"//[^/@\s\"]+@", "//***:***@", text)
+        return re.sub(r"(password=)[^&\s\"']*", r"\1***", text)
 
     def _hw_transcoding(self, stream_index: str = "") -> bool:
         # Only the HIGH-quality stream is transcoded. Protect opens several
@@ -789,11 +791,18 @@ class UnifiCamBase(metaclass=ABCMeta):
             self._motion_snapshot_file = None
         self._motion_snapshot = None
 
+    # A camera dropping off Wi-Fi used to hang a snapshot fetch for aiohttp's
+    # default 5 minutes, and the timeout then escaped as a non-ClientError.
+    SNAPSHOT_FETCH_TIMEOUT = aiohttp.ClientTimeout(total=10, sock_connect=5)
+    SNAPSHOT_UPLOAD_TIMEOUT = aiohttp.ClientTimeout(total=30, sock_connect=5)
+
     async def fetch_to_file(self, url: str, dst: Path) -> bool:
         try:
             # ssl=False: snapshot URLs point at LAN cameras with self-signed
             # certs (this Reolink is HTTPS-only), which fail verification.
-            async with aiohttp.request("GET", url, ssl=False) as resp:
+            async with aiohttp.request(
+                "GET", url, ssl=False, timeout=self.SNAPSHOT_FETCH_TIMEOUT
+            ) as resp:
                 if resp.status != 200:
                     self.logger.error(f"Error retrieving file {resp.status}")
                     return False
@@ -806,7 +815,12 @@ class UnifiCamBase(metaclass=ABCMeta):
                     f.write(body)
                 os.replace(tmp, dst)
                 return True
-        except aiohttp.ClientError:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+            # The exception text can carry the URL, and with it the password.
+            self.logger.warning(
+                f"Snapshot fetch failed: {type(e).__name__}"
+                f" ({self.redact_secrets(str(e))})"
+            )
             return False
 
     # Protocol implementation
@@ -1535,20 +1549,24 @@ class UnifiCamBase(metaclass=ABCMeta):
                         break
 
         if path and path.exists():
-            async with aiohttp.ClientSession() as session:
-                files = {"payload": open(path, "rb")}
-                files.update(msg["payload"].get("formFields", {}))
+            async with aiohttp.ClientSession(
+                timeout=self.SNAPSHOT_UPLOAD_TIMEOUT
+            ) as session:
                 try:
-                    await session.post(
-                        msg["payload"]["uri"],
-                        data=files,
-                        ssl=self._ssl_context,
-                    )
+                    with open(path, "rb") as payload_file:
+                        files = {"payload": payload_file}
+                        files.update(msg["payload"].get("formFields", {}))
+                        async with session.post(
+                            msg["payload"]["uri"],
+                            data=files,
+                            ssl=self._ssl_context,
+                        ):
+                            pass
                     self.logger.info(
                         f"Uploaded {snapshot_type}"
                         f" ({path.stat().st_size} bytes) from {path}"
                     )
-                except aiohttp.ClientError:
+                except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
                     self.logger.exception("Failed to upload snapshot")
         else:
             self.logger.warning(
@@ -1654,7 +1672,11 @@ class UnifiCamBase(metaclass=ABCMeta):
         elif fn == "ChangeAnalyticsSettings":
             res = await self.process_analytics_settings(m)
         elif fn == "GetRequest":
-            res = await self.process_snapshot_request(m)
+            # Answered off the message loop: fetching from a struggling camera
+            # and uploading take seconds, and every other Protect request
+            # (time sync, settings) used to wait behind them.
+            self._spawn_request(self._answer_snapshot_request(m))
+            return False
         elif fn == "UpdateUsernamePassword":
             res = self.gen_response(
                 "UpdateUsernamePassword", response_to=m["messageId"]
@@ -1700,6 +1722,27 @@ class UnifiCamBase(metaclass=ABCMeta):
             await self.send(res)
 
         return False
+
+    def _spawn_request(self, coro) -> asyncio.Task:
+        tasks = self.__dict__.setdefault("_request_tasks", set())
+        task = asyncio.create_task(coro)
+        tasks.add(task)  # keep a reference until it finishes
+        task.add_done_callback(tasks.discard)
+        return task
+
+    async def _answer_snapshot_request(self, m: AVClientRequest) -> None:
+        try:
+            res = await self.process_snapshot_request(m)
+            if res is not None:
+                await self.send(res)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception("Snapshot request failed")
+
+    def _cancel_request_tasks(self) -> None:
+        for task in list(self.__dict__.get("_request_tasks", ())):
+            task.cancel()
 
     async def process_talkback_settings(self, m: dict[str, Any]) -> AVClientResponse:
         payload = m.get("payload") or {}
@@ -1819,10 +1862,9 @@ class UnifiCamBase(metaclass=ABCMeta):
             if is_dead:
                 self.logger.warn(f"Previous ffmpeg process for {stream_index} died.")
 
-            self.logger.info(
-                f"Spawning ffmpeg for {stream_index} ({stream_name}):"
-                f" {self.redact_secrets(cmd)}"
-            )
+            # Shell quoting can split a password across quote transitions, so
+            # redacting the assembled command cannot reliably hide credentials.
+            self.logger.info(f"Spawning ffmpeg for {stream_index} ({stream_name})")
             # start_new_session: the whole pipeline (ffmpeg, the
             # hevc_flv/clock_sync helpers, nc) shares one process
             # group so stop_video_stream can tear it down as a unit
@@ -1854,6 +1896,7 @@ class UnifiCamBase(metaclass=ABCMeta):
         if self._watchdog_task is not None:
             self._watchdog_task.cancel()
             self._watchdog_task = None
+        self._cancel_request_tasks()
         await self.trigger_motion_stop()
         self.close_streams()
         self._remove_scratch_files()

@@ -10,11 +10,24 @@ import logging
 import shlex
 import urllib.parse
 
+import pytest
+
 from unifi.cams.rtsp import RTSPCam
 
 PASSWORD = "p@ss$(id)`x`\"'&#+%20"
 # Written raw, as people put them in compose files; ffmpeg accepts these characters.
 SOURCE = "rtsp://admin:pa$HOME$(id)`id`\"'x@192.0.2.10:554/main"
+PASSWORDS = [
+    "plain-secret",
+    "pa'ssword",
+    'pa"ssword',
+    "pa ssword",
+    "pa@ssword",
+    "pa/ssword",
+    "pa|ssword",
+    "pa$HOME$(id)`id`",
+    PASSWORD,
+]
 
 
 def make_cam() -> RTSPCam:
@@ -43,8 +56,12 @@ def test_api_url_carries_the_password_verbatim():
     assert query["cmd"] == ["GetAiState"]
 
 
-async def test_stream_pipeline_passes_the_source_as_one_argument(monkeypatch):
+@pytest.mark.parametrize("password", PASSWORDS)
+async def test_stream_pipeline_quotes_source_without_logging_it(
+    monkeypatch, caplog, password
+):
     cam = make_cam()
+    source_url = f"rtsp://admin:{password}@192.0.2.10:554/main"
     spawned = []
 
     class FakePopen:
@@ -60,16 +77,26 @@ async def test_stream_pipeline_passes_the_source_as_one_argument(monkeypatch):
     cam.get_base_ffmpeg_args = lambda stream_index="": ""
 
     async def source(stream_index):
-        return SOURCE
+        return source_url
 
     cam.get_stream_source = source
-    await cam.start_video_stream("video1", "s1", ("127.0.0.1", 7550))
-    ffmpeg_stage = shlex.split(spawned[0].split(" | ")[0])
-    assert ffmpeg_stage[ffmpeg_stage.index("-i") + 1] == SOURCE
+    with caplog.at_level(logging.INFO):
+        await cam.start_video_stream("video1", "s1", ("127.0.0.1", 7550))
+    argv = shlex.split(spawned[0])
+    assert argv[argv.index("-i") + 1] == source_url
+    assert "Spawning ffmpeg for video1 (s1)" in caplog.text
+    assert password not in caplog.text
+    assert shlex.quote(source_url) not in caplog.text
+    assert "ssword" not in caplog.text
 
 
-def test_snapshot_stream_passes_the_source_as_one_argument(monkeypatch, tmp_path):
+@pytest.mark.parametrize("password", PASSWORDS)
+def test_snapshot_stream_quotes_source_without_logging_it(
+    monkeypatch, tmp_path, caplog, password
+):
     cam = make_cam()
+    source_url = f"rtsp://admin:{password}@192.0.2.10:554/main"
+    cam.args.source = [source_url]
     cam.snapshot_stream = None
     cam.snapshot_dir = str(tmp_path)
     spawned = []
@@ -79,6 +106,11 @@ def test_snapshot_stream_passes_the_source_as_one_argument(monkeypatch, tmp_path
             spawned.append(cmd)
 
     monkeypatch.setattr("unifi.cams.rtsp.subprocess.Popen", FakePopen)
-    cam.start_snapshot_stream()
+    with caplog.at_level(logging.INFO):
+        cam.start_snapshot_stream()
     argv = shlex.split(spawned[0])
-    assert argv[argv.index("-i") + 1] == SOURCE
+    assert argv[argv.index("-i") + 1] == source_url
+    assert "Spawning stream for snapshots" in caplog.text
+    assert password not in caplog.text
+    assert shlex.quote(source_url) not in caplog.text
+    assert "ssword" not in caplog.text
