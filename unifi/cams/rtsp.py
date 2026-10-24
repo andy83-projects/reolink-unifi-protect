@@ -2,9 +2,11 @@ import argparse
 import asyncio
 import logging
 import os
+import shlex
 import subprocess
 import tempfile
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 
@@ -262,13 +264,12 @@ class RTSPCam(UnifiCamBase):
         if not self.snapshot_stream or self.snapshot_stream.poll() is not None:
             cmd = (
                 f"ffmpeg -nostdin -y -re -rtsp_transport {self.args.rtsp_transport} "
-                f'-i "{self.args.source[-1]}" '
+                f"-i {shlex.quote(self.args.source[-1])} "
                 "-r 1 "
                 f"-update 1 {self.snapshot_dir}/screen.jpg"
             )
-            self.logger.info(
-                f"Spawning stream for snapshots: {self.redact_secrets(cmd)}"
-            )
+            # Keep credential-bearing shell commands out of startup logs.
+            self.logger.info("Spawning stream for snapshots")
             self.snapshot_stream = subprocess.Popen(
                 cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True
             )
@@ -1066,12 +1067,21 @@ class RTSPCam(UnifiCamBase):
             self.logger.warning("Reolink AI (push): no events for 90s, clearing")
             await self._apply_ai_states({}, force_clear=True)
 
-    async def _poll_reolink_visitor(self) -> None:
-        url = (
-            f"https://{self.args.reolink_ai_host}/cgi-bin/api.cgi"
-            f"?cmd=GetEvents&channel=0&user={self.args.reolink_ai_user}"
-            f"&password={self.args.reolink_ai_password}"
+    def _reolink_api_url(self, cmd: str) -> str:
+        # Credentials are percent-encoded: a password containing &, #, + or %
+        # otherwise corrupts the query string and every poll fails to log in.
+        query = urllib.parse.urlencode(
+            {
+                "cmd": cmd,
+                "channel": 0,
+                "user": self.args.reolink_ai_user,
+                "password": self.args.reolink_ai_password,
+            }
         )
+        return f"https://{self.args.reolink_ai_host}/cgi-bin/api.cgi?{query}"
+
+    async def _poll_reolink_visitor(self) -> None:
+        url = self._reolink_api_url("GetEvents")
         self.logger.info(
             f"Polling Reolink doorbell button on {self.args.reolink_ai_host}"
             f" every {self.args.reolink_visitor_interval}s"
@@ -1092,15 +1102,13 @@ class RTSPCam(UnifiCamBase):
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    self.logger.warning(f"Reolink visitor poll failed: {e}")
+                    self.logger.warning(
+                        f"Reolink visitor poll failed: {self.redact_secrets(str(e))}"
+                    )
                 await asyncio.sleep(self.args.reolink_visitor_interval)
 
     async def _poll_reolink_ai(self) -> None:
-        url = (
-            f"https://{self.args.reolink_ai_host}/cgi-bin/api.cgi"
-            f"?cmd=GetAiState&channel=0&user={self.args.reolink_ai_user}"
-            f"&password={self.args.reolink_ai_password}"
-        )
+        url = self._reolink_api_url("GetAiState")
         self.logger.info(
             f"Polling Reolink AI state on {self.args.reolink_ai_host}"
             f" every {self.args.reolink_ai_interval}s"
@@ -1155,7 +1163,9 @@ class RTSPCam(UnifiCamBase):
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    self.logger.warning(f"Reolink AI poll failed: {e}")
+                    self.logger.warning(
+                        f"Reolink AI poll failed: {self.redact_secrets(str(e))}"
+                    )
                 await asyncio.sleep(self.args.reolink_ai_interval)
 
     async def close(self) -> None:

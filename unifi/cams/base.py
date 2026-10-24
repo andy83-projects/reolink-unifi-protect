@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import signal
 import ssl
@@ -1850,7 +1851,7 @@ class UnifiCamBase(metaclass=ABCMeta):
             cmd = (
                 "ffmpeg -nostdin -loglevel error -y"
                 f" {self.get_base_ffmpeg_args(stream_index)} -rtsp_transport"
-                f' {self.args.rtsp_transport} -i "{source}"'
+                f" {self.args.rtsp_transport} -i {shlex.quote(source)}"
                 f" {self.get_extra_ffmpeg_args(stream_index)} -metadata"
                 f" streamName={stream_name} -f flv - | {hevc_filter}{sys.executable} -m"
                 " unifi.clock_sync"
@@ -1861,10 +1862,9 @@ class UnifiCamBase(metaclass=ABCMeta):
             if is_dead:
                 self.logger.warn(f"Previous ffmpeg process for {stream_index} died.")
 
-            self.logger.info(
-                f"Spawning ffmpeg for {stream_index} ({stream_name}):"
-                f" {self.redact_secrets(cmd)}"
-            )
+            # Shell quoting can split a password across quote transitions, so
+            # redacting the assembled command cannot reliably hide credentials.
+            self.logger.info(f"Spawning ffmpeg for {stream_index} ({stream_name})")
             # start_new_session: the whole pipeline (ffmpeg, the
             # hevc_flv/clock_sync helpers, nc) shares one process
             # group so stop_video_stream can tear it down as a unit
