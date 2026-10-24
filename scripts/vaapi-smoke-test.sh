@@ -35,6 +35,12 @@ for input_codec in h264 hevc; do
             -of json "$work_dir/output.mp4"
         # Decode every output frame to catch corrupt/empty output, not just headers.
         ffmpeg -nostdin -hide_banner -loglevel error \
-            -i "$work_dir/output.mp4" -f null -
+            -xerror -i "$work_dir/output.mp4" -f null -
+        frames=$(ffprobe -v error -select_streams v:0 -count_frames \
+            -show_entries stream=nb_read_frames -of csv=p=0 "$work_dir/output.mp4")
+        if [ "$frames" != 10 ]; then
+            echo "Expected 10 decoded frames, got $frames" >&2
+            exit 1
+        fi
     done
 done

@@ -9,12 +9,14 @@ on:
       - deploy/ai-sidecar/**
       - scripts/vaapi-smoke-test.sh
       - .github/workflows/container-check.yml
-  push:
-    branches: [feat/amd-vaapi]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: container-check-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:

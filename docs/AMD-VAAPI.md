@@ -87,6 +87,9 @@ env:
 Schedule it on a node advertising that resource. A GPU request is reserved
 even when a replica is on standby. With one advertised GPU per node, applying
 this request to every camera/standby replica can leave pods unschedulable.
+Some AMD device-plugin configurations also inject `/dev/kfd`; the pod cannot
+start if that device is missing on the node, even though this VA-API path does
+not need ROCm.
 
 For a cluster deliberately sharing one video engine across several camera
 pods, configure device sharing and render-group permissions using the cluster's
@@ -132,6 +135,21 @@ of every camera resolution.
 
 Physical-camera/Protect integration and a staged rollout remain separate from
 these checks. Keep the currently deployed image available for rollback.
+
+### Development validation (2026-10-24)
+
+- 170 Python tests and the repository's pre-commit checks passed.
+- The amd64 runtime image built and passed Python, Node/sidecar, Mesa-file and
+  FFmpeg encoder checks in CI.
+- Synthetic hardware tests passed on the SER5's Ryzen 7 5825U using Ubuntu
+  24.04, FFmpeg 6.1.1 and Mesa 25.2.8. Both H.264 and HEVC inputs produced
+  ten valid frames through each output path: H.264 at 160x120 with scaling,
+  and HEVC at 320x240. This does not establish 5K or multi-camera throughput.
+- The nested worker's plugin allocation failed because `/dev/kfd` was missing;
+  a regular `/dev/dri` mount was also blocked by its device policy. The
+  successful synthetic check used a short-lived privileged test pod with the
+  DRM device mounted. Production GPU access still needs a suitable device
+  policy or a working device-plugin allocation. No production pod was changed.
 
 References: [FFmpeg VA-API encoders](https://ffmpeg.org/ffmpeg-codecs.html#VAAPI-encoders),
 [Debian Mesa driver files](https://packages.debian.org/trixie/amd64/mesa-va-drivers/filelist).
