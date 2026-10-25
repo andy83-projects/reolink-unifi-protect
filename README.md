@@ -28,6 +28,20 @@ Reolink with on-board detection.
 > a UniFi camera (UVC G5 Pro by default in the example config) toward your own
 > NVR. Protect updates may change the ingest protocol at any time.
 
+## Contributors
+
+This fork is maintained and developed by:
+
+- [Andy Drag (@andy83-projects)](https://github.com/andy83-projects) — fork
+  maintainer, lab integration and validation, and AMD VA-API support.
+- [@jikdoc](https://github.com/jikdoc) — snapshot, push-event and credential
+  fixes, the Debian runtime upgrade, and audio/scaling controls
+  ([PRs #1–#6](https://github.com/andy83-projects/reolink-unifi-protect/pulls?q=is%3Apr+author%3Ajikdoc+is%3Amerged)).
+
+The upstream projects and their contributors are acknowledged in [Credits](#credits).
+The full commit-based contributor list is available in
+[GitHub Contributors](https://github.com/andy83-projects/reolink-unifi-protect/graphs/contributors).
+
 ## What the andy83-projects fork adds
 
 Everything below was added on top of the upstream project and is covered by the unit tests in `tests/`.
