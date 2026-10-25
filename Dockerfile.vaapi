@@ -7,30 +7,26 @@
 # ffmpeg 7.1 can mux HEVC into FLV ("enhanced FLV"), which the current
 # H.265-passthrough plan needs, and the Intel iHD driver + oneVPL runtime
 # keep the QSV fallback (--hw-transcode in unifi/cams/base.py) working if
-# Protect refuses the passthrough stream.
+# Protect refuses the passthrough stream. Mesa adds AMD VA-API support;
+# libva selects the driver from the render device unless explicitly overridden.
 #
 # Build (on the NAS, where the iGPU is):
 #   docker build -f Dockerfile.vaapi -t unifi-cam-proxy:vaapi .
 # Node stage: supplies the `node` binary and the AI box sidecar's installed dependencies for
 # `--ai-sidecar` (the proxy runs it as a subprocess; see deploy/ai-sidecar and docs/PROTECT-7.3.md).
-FROM node:22-slim AS sidecar
+# Bookworm's glibc is compatible with the Debian 13 runtime.
+FROM node:22-bookworm-slim AS sidecar
 WORKDIR /opt/ai-sidecar
 COPY deploy/ai-sidecar/package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 COPY deploy/ai-sidecar/index.mjs deploy/ai-sidecar/decode.mjs ./
 
-# Debian 13 rather than Ubuntu 24.04: Ubuntu's Python 3.12.3 is too old for
-# reolinkapi >= 0.4 (pip silently fell back to 0.1.5, which pins PyYAML 5.3.1,
-# CVE-2020-14343), and its iHD 24.1 driver fails to initialise on newer kernels
-# (seen on Proxmox 7.0 with an Alder Lake iGPU). Debian 13 has Python 3.13 and
-# iHD 25.2; its ffmpeg 7.1 muxes HEVC into enhanced FLV like 6.1 does.
 FROM debian:trixie
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    LIBVA_DRIVER_NAME=iHD \
     PIP_NO_CACHE_DIR=1
 
-# intel-media-va-driver-non-free lives in Debian's non-free component.
+# Debian packages the Intel media driver in non-free; Mesa supports AMD.
 RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' \
         /etc/apt/sources.list.d/debian.sources \
     && apt-get update && apt-get install -y --no-install-recommends \
@@ -38,7 +34,7 @@ RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firm
         build-essential git pkg-config ca-certificates \
         libjpeg-dev zlib1g-dev \
         ffmpeg netcat-openbsd \
-        intel-media-va-driver-non-free libva2 libva-drm2 vainfo \
+        intel-media-va-driver-non-free mesa-va-drivers libva2 libva-drm2 vainfo \
         libvpl2 libmfx-gen1.2 \
     && rm -rf /var/lib/apt/lists/*
 

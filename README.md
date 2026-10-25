@@ -148,7 +148,8 @@ The full, generated list is in [docs/FLAGS.md](docs/FLAGS.md); the main ones are
 | Flag | Purpose |
 |---|---|
 | `--hi-codec h265`, `--hi-width/height/fps` | Honest per-channel advertisement for video1 (upstream hardcodes h264) |
-| `--lo-codec`, `--lo-h265-transcode`, `--lo-width/height/fps` | Same for video2/3, with optional QSV HEVC transcode of an H.264 sub stream |
+| `--lo-codec`, `--lo-h265-transcode`, `--lo-width/height/fps` | Same for video2/3, with optional hardware HEVC transcode of a sub stream |
+| `--hw-backend vaapi`, `--hw-device`, `--hw-transcode` | Opt-in AMD/Mesa VA-API encoding; Intel QSV remains the default backend. See [AMD GPU setup](docs/AMD-VAAPI.md) for container, codec, and Kubernetes requirements |
 | `--sysid`, `--platform`, `--fw-build` | Full camera identity (e.g. `0xa598` / `sav837gw` = UVC G5 Pro) — required for Protect ≥ 3.x model recognition and the H.265 capability gate |
 | `--reolink-ai-host/-user/-password` | HTTPS `GetAiState` poller: typed detections even without the sidecar |
 | `--ai-sink-port` | HTTP endpoint where a standalone Baichuan sidecar posts real per-object boxes (with `--ai-sidecar` it defaults to loopback port 8099) |
@@ -167,6 +168,8 @@ The full, generated list is in [docs/FLAGS.md](docs/FLAGS.md); the main ones are
 | `--ptz`, `--ptz-home-preset` | Advertise a pan/tilt/zoom camera so Protect shows its joystick; drive the Reolink from Protect's controls and map Home View to a camera preset (see [docs/PROTECT-7.3.md](docs/PROTECT-7.3.md)) |
 | `--reolink-isp` | Write Protect's image settings (brightness, contrast, WDR, ...) to the camera when they change |
 | `--reolink-reboot` | Reboot the Reolink camera when Protect's restart camera is used |
+| `--reolink-scheme http` | For cameras with HTTPS turned off: the image-settings, spotlight, PTZ, reboot and snapshot calls use plain HTTP |
+| `--reolink-snapshot` | Snapshots through a token login (password in the request body) instead of `--snapshot-url`, whose `password=` query parameter fails on recent firmware when the password has special characters |
 
 ## Doorbells, push events and two-way audio
 
@@ -229,3 +232,5 @@ andy83-projects together with Claude (Anthropic).
 MIT — see [LICENSE](LICENSE). Original work © 2023 Keshav Varma;
 modifications © 2026 Wouter Steegers;
 further modifications © 2026 andy83-projects.
+
+For Debian 13 / FFmpeg 7 images and native Python requirements, follow the [runtime migration guide](docs/RUNTIME-MIGRATION.md) before upgrading.

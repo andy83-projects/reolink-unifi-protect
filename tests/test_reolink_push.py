@@ -213,3 +213,24 @@ async def test_push_detection_requests_a_per_object_crop(cam):
     await cam._apply_ai_states(states(people=True))
     await cam._apply_ai_states(states(people=True))  # repeated: no second crop
     assert cam.crops == [(100, "person", cam.SYNTHETIC_BOX)]
+
+
+async def test_clear_during_a_slow_start_still_stops_the_event(cam):
+    # Real risk on Wi-Fi cameras: the start awaits a snapshot and a crop that take
+    # seconds; a clear pushed meanwhile used to be dropped, holding the event open
+    # until the 90 s expiry.
+    gate = asyncio.Event()
+
+    async def slow_start(object_type=None, descriptors=None):
+        cam.events.append(("start", object_type))
+        await gate.wait()
+
+    cam.trigger_motion_start = slow_start
+    starting = asyncio.ensure_future(cam._apply_ai_states(states(people=True)))
+    await asyncio.sleep(0)
+    clearing = asyncio.ensure_future(cam._apply_ai_states(states()))
+    await asyncio.sleep(0.01)
+    gate.set()
+    await asyncio.gather(starting, clearing)
+    assert cam.events == [("start", SmartDetectObjectType.PERSON), ("stop",)]
+    assert cam._ai_active is None
