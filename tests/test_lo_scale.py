@@ -1,9 +1,6 @@
-"""Cutting the medium/low channels from the main stream.
+"""Backend-aware lower-channel scaling and opt-in audio controls.
 
-Real case: a Wi-Fi Reolink Elite Floodlight carried its 3 Mbps main stream alone at full
-rate, but starved (249 of 400 frames) when main and sub were pulled together, so Protect
-timed out every channel. With --lo-scale every channel is fed from one main stream and
-the lo channels are scaled on the iGPU.
+A shared relay supplies one upstream connection; scaling alone does not.
 """
 
 import argparse

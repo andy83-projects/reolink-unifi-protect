@@ -11,10 +11,11 @@ Every option of the `rtsp` source, generated from the argument parser. **New** m
 |---|---|---|---|
 | `--ffmpeg-args`, `-f` | `-c:v copy -ar 32000 -ac 1 -codec:a aac -b:a 32k` |  | Transcoding args for `ffmpeg -i <src> <args> <dst>` |
 | `--rtsp-transport` | `tcp` |  | RTSP transport protocol used by stream |
-| `--hw-transcode` | off |  | Hardware-transcode video to H.264 via Intel QSV (iGPU) |
-| `--hw-device` | `/dev/dri/renderD128` |  | Intel render node for --hw-transcode |
+| `--hw-transcode` | off |  | Hardware-transcode the high stream to H.264 using --hw-backend |
+| `--hw-backend` | `qsv` | **New** | `qsv` for Intel, `vaapi` for AMD/Mesa; selecting a backend alone does not enable encoding. See [AMD GPU setup](AMD-VAAPI.md) |
+| `--hw-device` | `/dev/dri/renderD128` |  | DRM render node for hardware transcoding |
 | `--transcode-width` | `2560` |  | Output width for --hw-transcode (height from --transcode-height) |
-| `--transcode-height` | `776` |  | Output height for --hw-transcode (vpp_qsv needs both explicitly) |
+| `--transcode-height` | `776` |  | Output height for --hw-transcode |
 | `--transcode-bitrate` | `6M` |  | Target bitrate for the hardware H.264 encode |
 | `--hi-codec` | `h264` |  | Codec ACTUALLY carried by the high-quality stream (video1) |
 | `--hi-width` | `1920` |  |  |
@@ -24,10 +25,11 @@ Every option of the `rtsp` source, generated from the argument parser. **New** m
 | `--lo-width` | `1280` |  |  |
 | `--lo-height` | `720` |  |  |
 | `--lo-fps` | `15` |  |  |
-| `--lo-h265-transcode` | off |  | QSV-transcode the medium/low channels to H.265 |
+| `--lo-h265-transcode` | off |  | Hardware-transcode the medium/low channels to H.265 using --hw-backend |
 | `--lo-transcode-bitrate` | `1M` |  | Bitrate for --lo-h265-transcode |
-| `--lo-scale` | off | **New** | With --lo-h265-transcode, scale the medium/low channels to --lo-width x --lo-height on the iGPU, so all channels can come from the camera's main stream (one stream from the camera) |
-| `--lo-audio-args` | `-c:a copy` | **New** | Audio args for the --lo-h265-transcode channels. Re-encode (e.g. `-ar 16000 -ac 1 -codec:a aac -b:a 32k`) when copied audio stalls ffmpeg 7's FLV muxer |
+| `--lo-scale` | off | **New** | Scale lower hardware-transcoded channels with Intel QSV or VA-API. Requires `--lo-h265-transcode`; a shared relay provides one upstream connection. |
+| `--lo-audio-args` | backend default | **New** | Audio override for lower H.265 transcodes only; QSV defaults to copy, VA-API to AAC 16k mono. See runtime migration guide for FFmpeg 7. |
+| `--vaapi-driver` | auto | **New** | Optional libva driver override, e.g. `iHD` or `radeonsi`; does not enable encoding. |
 | `--no-audio` | off | **New** | Send video only on every channel (for cameras whose audio timestamps stall the FLV muxer) |
 | `--source`, `-s` |  |  | Source(s) for up to three streams in order of descending quality |
 | `--http-api` | `0` |  | Specify a port number to enable the HTTP API (default: disabled) |
@@ -83,3 +85,5 @@ Every option of the `rtsp` source, generated from the argument parser. **New** m
 | `--spotlight-default-seconds` | `15` | **New** | How long the spotlight stays on when neither the request nor Protect's 'turn off after no motion' slider gives a duration |
 | `--reolink-isp` | off | **New** | Write Protect's image settings (brightness, contrast, WDR, ...) to the camera when they change (needs --reolink-ai-host) |
 | `--reolink-reboot` | off | **New** | Reboot the Reolink camera when Protect's restart camera is used (needs --reolink-ai-host) |
+| `--reolink-scheme` | `https` | **New** | Scheme for the camera's web API on --reolink-ai-host (use `http` when the camera's HTTPS is turned off) |
+| `--reolink-snapshot` | off | **New** | Fetch snapshots from --reolink-ai-host with a token login instead of --snapshot-url; works with passwords that break user/password URLs |
