@@ -157,3 +157,27 @@ def test_reolink_override_honours_hardware_backend(stream, encoder):
 def test_unknown_backend_is_rejected():
     with pytest.raises(SystemExit):
         make_cam("--hw-backend", "unknown")
+
+
+@pytest.mark.parametrize("driver", [None, "iHD", "radeonsi"])
+async def test_driver_override_is_optional_and_local_to_pipeline(driver, monkeypatch):
+    options = ["--vaapi-driver", driver] if driver else []
+    cam = make_cam(*options)
+    environments = []
+
+    class Process:
+        def __init__(self, command, **kwargs):
+            environments.append(kwargs["env"])
+
+    async def source(_):
+        return "rtsp://192.0.2.10/input"
+
+    cam.get_stream_source = source
+    monkeypatch.setenv("LIBVA_DRIVER_NAME", "inherited")
+    monkeypatch.setattr("unifi.cams.base.subprocess.check_output", lambda _: b"")
+    monkeypatch.setattr("unifi.cams.base.subprocess.Popen", Process)
+    await cam.start_video_stream("video1", "test", ("127.0.0.1", 7550))
+    import os
+
+    assert environments[0]["LIBVA_DRIVER_NAME"] == (driver or "inherited")
+    assert os.environ["LIBVA_DRIVER_NAME"] == "inherited"

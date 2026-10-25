@@ -143,6 +143,11 @@ class UnifiCamBase(metaclass=ABCMeta):
             help="Hardware backend: qsv for Intel (default), vaapi for AMD/Mesa",
         )
         parser.add_argument(
+            "--vaapi-driver",
+            default=None,
+            help="Optional libva driver override (e.g. iHD or radeonsi); default: auto",
+        )
+        parser.add_argument(
             "--hw-device",
             default="/dev/dri/renderD128",
             help="DRM render node for hardware transcoding",
@@ -1910,9 +1915,14 @@ class UnifiCamBase(metaclass=ABCMeta):
             # group so stop_video_stream can tear it down as a unit
             # instead of orphaning ffmpeg when only the shell is killed.
             self._stream_meta[stream_index] = (stream_name, destination)
+            driver = getattr(self.args, "vaapi_driver", None)
+            environment = os.environ.copy()
+            if driver:
+                environment["LIBVA_DRIVER_NAME"] = driver
             self._ffmpeg_handles[stream_index] = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
+                env=environment,
                 shell=True,
                 start_new_session=True,
             )

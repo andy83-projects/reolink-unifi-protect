@@ -232,3 +232,5 @@ andy83-projects together with Claude (Anthropic).
 MIT — see [LICENSE](LICENSE). Original work © 2023 Keshav Varma;
 modifications © 2026 Wouter Steegers;
 further modifications © 2026 andy83-projects.
+
+For Debian 13 / FFmpeg 7 images and native Python requirements, follow the [runtime migration guide](docs/RUNTIME-MIGRATION.md) before upgrading.
