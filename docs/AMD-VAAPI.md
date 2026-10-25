@@ -97,9 +97,15 @@ start if that device is missing on the node, even though this VA-API path does
 not need ROCm.
 
 For a cluster deliberately sharing one video engine across several camera
-pods, configure device sharing and render-group permissions using the cluster's
-supported method. For example, the existing shared-device arrangement can
-mount the node's `/dev/dri`:
+pods, a [generic device plugin](https://github.com/squat/generic-device-plugin)
+can advertise multiple `devic.es/amd-video` slots for one render device. A pod <!-- codespell:ignore devic -->
+requests one slot with `resources.limits.devic.es/amd-video: 1`; the plugin <!-- codespell:ignore devic -->
+injects the render device without KFD, hostPath, or a privileged application.
+These slots limit admission, not GPU time, bandwidth, or memory. Standby
+replicas reserve slots too. Configure the resource on every eligible node.
+
+An existing shared-device arrangement can alternatively mount the node's
+`/dev/dri`, provided its device policy permits access:
 
 ```yaml
 volumeMounts:
@@ -158,3 +164,19 @@ these checks. Keep the currently deployed image available for rollback.
 
 References: [FFmpeg VA-API encoders](https://ffmpeg.org/ffmpeg-codecs.html#VAAPI-encoders),
 [Debian Mesa driver files](https://packages.debian.org/trixie/amd64/mesa-va-drivers/filelist).
+
+### Shared-device validation (2026-10-25)
+
+- Four unprivileged video pods ran concurrently on each of three SER5 workers;
+  all twelve H.264 output files decoded successfully. Compute allocations also
+  opened their KFD/card/render devices on each worker.
+- Sustained validation exposed FFmpeg 6.1 frame-pool exhaustion on a ten-vCPU
+  worker. The AMD backend now uses one decoder submission thread; the same
+  workload then passed on all three workers. Decoding remains on the GPU.
+- This synthetic workload was 320x240 input scaled to 160x120 for 20 seconds.
+  It does not establish full-resolution multi-camera capacity.
+- A separate one-minute test read the actual PTZ camera on the repaired worker:
+  H.264 VA-API output preserved 2560x1920 at 20 fps with AAC audio, and the whole
+  output file decoded successfully. The existing Protect automation account can
+  view only the doorbells, so end-to-end PTZ/Protect canary validation remains
+  pending suitable camera view access.
