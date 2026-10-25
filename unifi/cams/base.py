@@ -1862,9 +1862,12 @@ class UnifiCamBase(metaclass=ABCMeta):
         ):
             device = shlex.quote(self.args.hw_device)
             if self._hw_backend() == "vaapi":
+                # Automatic decoder threading can exhaust FFmpeg 6 VA-API
+                # surface pools on workers with many CPUs. Decode on the GPU
+                # with one submission thread; QSV/passthrough stay unchanged.
                 prefix = (
                     f"-hwaccel vaapi -hwaccel_device {device}"
-                    " -hwaccel_output_format vaapi "
+                    " -hwaccel_output_format vaapi -threads 1 "
                 )
             else:
                 # Let ffmpeg select the decoder for either H.264 or HEVC.

@@ -81,6 +81,8 @@ async def test_vaapi_pipeline_keeps_hardware_frames_and_correct_framing(
     assert argv[argv.index("-hwaccel_device") + 1] == "/dev/dri/renderD128"
     assert argv[argv.index("-hwaccel_output_format") + 1] == "vaapi"
     assert argv.index("-hwaccel_output_format") < input_index < argv.index("-vf")
+    assert argv.index("-threads") < input_index
+    assert argv[argv.index("-threads") + 1] == "1"
     assert "qsv" not in commands[0]
     assert argv[argv.index("-ar") + 1] == "16000"
     assert argv[argv.index("-bf") + 1] == "0"

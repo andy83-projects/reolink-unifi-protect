@@ -50,6 +50,11 @@ The VA-API path uses NV12 (8-bit) surfaces, no B-frames, and approximately
 one-second GOPs at the advertised frame rate. Audio is encoded to mono AAC at
 16 kHz / 32 kbit/s. Audio encoding runs on the CPU.
 
+GPU decoding uses one submission thread. Automatic decoder threading exhausted
+FFmpeg 6.1's hardware-frame pools on the ten-vCPU test worker; limiting the
+decoder threads passed the same sustained workload. This keeps decoding on
+the GPU. See the [FFmpeg frame-pool discussion](https://ffmpeg.org/pipermail/ffmpeg-devel/2024-February/322169.html).
+
 ## Lower streams: H.265 encoding
 
 To encode video2/video3 using the AMD GPU, add:

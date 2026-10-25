@@ -25,7 +25,7 @@ for input_codec in h264 hevc; do
             filter=scale_vaapi=w=160:h=120:format=nv12
         fi
         ffmpeg -nostdin -hide_banner -loglevel error -y \
-            -hwaccel vaapi -hwaccel_device "$device" -hwaccel_output_format vaapi \
+            -hwaccel vaapi -hwaccel_device "$device" -hwaccel_output_format vaapi -threads 1 \
             -i "$work_dir/input.mp4" -vf "$filter" \
             -c:v "${output_codec}_vaapi" -b:v 1M -g 10 -bf 0 -an \
             "$work_dir/output.mp4"
