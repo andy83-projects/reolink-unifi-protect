@@ -177,6 +177,15 @@ References: [FFmpeg VA-API encoders](https://ffmpeg.org/ffmpeg-codecs.html#VAAPI
   It does not establish full-resolution multi-camera capacity.
 - A separate one-minute test read the actual PTZ camera on the repaired worker:
   H.264 VA-API output preserved 2560x1920 at 20 fps with AAC audio, and the whole
-  output file decoded successfully. The existing Protect automation account can
-  view only the doorbells, so end-to-end PTZ/Protect canary validation remains
-  pending suitable camera view access.
+  output file decoded successfully.
+- The SHA candidate was deployed to the existing PTZ proxy with unchanged
+  identity, dimensions, and replica placement. Its hardware encoder stayed
+  alive across a 90-second sample and made output progress. Protect reported
+  Online/Excellent at 20 fps and 2560x1920; the owner confirmed that recordings
+  from the candidate interval played normally. The previous deployment and
+  Flux reconciliation were restored afterward. Protect's restart marker was
+  expected; no camera re-adoption was needed.
+- The existing API account sees only doorbells, so Protect checks used an
+  existing authenticated app session. The CI observation checkpoint timed out
+  while coordinating that review; hardware output and recording playback were
+  verified separately rather than claiming the automated job passed.
