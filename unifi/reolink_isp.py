@@ -13,7 +13,12 @@ Mapping (Protect 0-100 sliders to Reolink 0-255, where 50 is the 128 midpoint):
 """
 
 import asyncio
+import json
 import logging
+import os
+import time
+import urllib.parse
+from pathlib import Path
 from typing import Any, Optional
 
 import aiohttp
@@ -30,6 +35,19 @@ HANDLED = {*IMAGE_FIELDS, "denoise", "mirror", "flip", "wdr"}
 HDR_BY_WDR = {0: 0, 1: 2, 2: 1, 3: 1}
 # Protect's WDR levels are 0 (off) to 3; spread them over the DRC range.
 WDR_DRC_LEVELS = {1: 85, 2: 170, 3: 255}
+
+
+def _auth_error(response: Any) -> bool:
+    """Recognize the camera's explicit invalid/expired-session responses."""
+    if isinstance(response, dict):
+        response = [response]
+    return isinstance(response, list) and any(
+        isinstance(result, dict)
+        and result.get("code") != 0
+        and isinstance(result.get("error"), dict)
+        and result["error"].get("rspCode") in (-6, -7)
+        for result in response
+    )
 
 
 def scale(value: Any) -> int:
@@ -75,18 +93,23 @@ class ReolinkIsp:
         password: str,
         logger: logging.Logger,
         channel: int = 0,
+        scheme: str = "https",
     ) -> None:
         self.host = host
         self.user = user
         self.password = password
         self.logger = logger
         self.channel = channel
+        self.scheme = scheme
         self._token: Optional[str] = None
         self._lock = asyncio.Lock()
         self._applied: dict[str, Any] = {}
 
+    def _url(self, query: str) -> str:
+        return f"{self.scheme}://{self.host}/cgi-bin/api.cgi?{query}"
+
     async def _post(self, query: str, body: list) -> list:
-        url = f"https://{self.host}/cgi-bin/api.cgi?{query}"
+        url = self._url(query)
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url, json=body, ssl=False, timeout=aiohttp.ClientTimeout(total=15)
@@ -117,10 +140,7 @@ class ReolinkIsp:
                 await self._login()
             res = await self._post(f"token={self._token}", cmds)
             # rspCode -6 / -7 mean the token is no longer valid.
-            if attempt == 0 and any(
-                r.get("code") != 0 and r.get("error", {}).get("rspCode") in (-6, -7)
-                for r in res
-            ):
+            if attempt == 0 and _auth_error(res):
                 self._token = None
                 continue
             return res
@@ -188,3 +208,69 @@ class ReolinkIsp:
                 return False
             finally:
                 self._token = None
+
+    SNAP_TIMEOUT = aiohttp.ClientTimeout(total=10, sock_connect=5)
+
+    async def snapshot(self, dst: Path) -> bool:
+        """Save a JPEG from the camera to dst, logged in with a token.
+
+        A ``--snapshot-url`` with ``user=``/``password=`` in the query fails on recent
+        firmware whenever the password has special characters, even percent-encoded;
+        the token login takes the password in the request body and always works.
+        """
+        # Settings and reboot already hold this lock around _call(). Lock the
+        # whole snapshot transaction here; locking _login() would deadlock those
+        # callers, and a reboot must not invalidate a token during its Snap.
+        async with self._lock:
+            try:
+                for attempt in (0, 1):
+                    if self._token is None:
+                        await self._login()
+                    query = urllib.parse.urlencode(
+                        {
+                            "cmd": "Snap",
+                            "channel": self.channel,
+                            "rs": int(time.time() * 1000),
+                            "token": self._token,
+                        }
+                    )
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            self._url(query), ssl=False, timeout=self.SNAP_TIMEOUT
+                        ) as resp:
+                            status = resp.status
+                            body = await resp.read()
+                    if 200 <= status < 300 and body[:2] == b"\xff\xd8":
+                        # Readers must never see a half-written JPEG.
+                        tmp = dst.with_name(dst.name + ".part")
+                        tmp.write_bytes(body)
+                        os.replace(tmp, dst)
+                        return True
+                    try:
+                        response = json.loads(body)
+                    except ValueError:
+                        response = None
+                    expired = status == 401 or (
+                        (200 <= status < 300 or status == 403) and _auth_error(response)
+                    )
+                    if expired:
+                        self._token = None
+                        if attempt == 0:
+                            continue
+                        self.logger.warning(
+                            "Reolink snapshot failed: authentication rejected"
+                        )
+                    else:
+                        # An outage, denied permission, or malformed image is
+                        # not evidence that the shared login has expired.
+                        self.logger.warning(
+                            "Reolink snapshot failed: HTTP %s returned no JPEG",
+                            status,
+                        )
+                    return False
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+                self.logger.warning("Reolink snapshot failed: %s", type(exc).__name__)
+            except (KeyError, IndexError, TypeError, ValueError):
+                self._token = None
+                self.logger.warning("Reolink snapshot failed: login rejected")
+            return False
