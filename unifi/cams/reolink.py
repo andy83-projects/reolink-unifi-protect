@@ -126,6 +126,10 @@ class Reolink(UnifiCamBase):
                 self.logger.error(f"Motion API request failed, retrying. Error: {err}")
 
     def get_extra_ffmpeg_args(self, stream_index: str) -> str:
+        if self._hw_transcoding(stream_index) or self._lo_h265_transcoding(
+            stream_index
+        ):
+            return super().get_extra_ffmpeg_args(stream_index)
         if stream_index == "video1":
             fps = self.stream_fps[0]
         else:
