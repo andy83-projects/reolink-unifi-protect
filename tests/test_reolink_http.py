@@ -7,9 +7,12 @@ body) works. ``--reolink-scheme http`` and ``--reolink-snapshot`` cover both.
 """
 
 import argparse
+import asyncio
+import json
 import logging
 import urllib.parse
 
+import pytest
 from aiohttp import web
 
 from unifi.cams.rtsp import RTSPCam
@@ -21,7 +24,14 @@ JPEG = b"\xff\xd8\xff\xe0fake-jpeg\xff\xd9"
 PASSWORD = "p@ss&w#rd%+"
 
 
-async def fake_camera(expire_first_token=False):
+async def fake_camera(
+    expire_first_token=False,
+    *,
+    login_delay=0,
+    snapshot_status=200,
+    snapshot_body=None,
+    expired_token_response="json-list",
+):
     """A local stand-in for a Reolink's /cgi-bin/api.cgi over plain HTTP."""
     state = {"logins": 0, "snaps": 0}
 
@@ -36,15 +46,21 @@ async def fake_camera(expire_first_token=False):
                     [{"cmd": "Login", "code": 1, "error": {"rspCode": -7}}]
                 )
             token = f"tok{state['logins']}"
+            await asyncio.sleep(login_delay)
             return web.json_response(
                 [{"cmd": "Login", "code": 0, "value": {"Token": {"name": token}}}]
             )
         if cmd == "Snap":
             state["snaps"] += 1
+            if snapshot_body is not None or snapshot_status != 200:
+                return web.Response(body=snapshot_body, status=snapshot_status)
             if expire_first_token and request.query.get("token") == "tok1":
-                return web.json_response(
-                    [{"cmd": "Snap", "code": 1, "error": {"rspCode": -6}}]
-                )
+                error = {"cmd": "Snap", "code": 1, "error": {"rspCode": -6}}
+                if expired_token_response == "http401":
+                    return web.Response(status=401, text="Unauthorized")
+                if expired_token_response == "json-object":
+                    return web.json_response(error)
+                return web.json_response([error])
             if not request.query.get("token", "").startswith("tok"):
                 return web.json_response([{"cmd": "Snap", "code": 1}])
             return web.Response(body=JPEG, content_type="image/jpeg")
@@ -162,3 +178,108 @@ def test_api_url_follows_the_scheme(tmp_path):
         PASSWORD
     ]
     assert make_cam(tmp_path)._reolink_api_url("GetAiState").startswith("https://")
+
+
+@pytest.mark.parametrize("expired", [False, True])
+async def test_concurrent_snapshots_share_login_and_refresh(tmp_path, expired):
+    runner, host, state = await fake_camera(
+        expire_first_token=expired, login_delay=0.03
+    )
+    try:
+        client = ReolinkIsp(host, "admin", PASSWORD, LOG, scheme="http")
+        paths = [tmp_path / f"snapshot-{i}.jpg" for i in range(5)]
+        results = await asyncio.wait_for(
+            asyncio.gather(*(client.snapshot(path) for path in paths)), timeout=3
+        )
+        assert results == [True] * 5
+        assert all(path.read_bytes() == JPEG for path in paths)
+        assert state == {"logins": 2 if expired else 1, "snaps": 6 if expired else 5}
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize("operation", ["apply", "reboot"])
+async def test_snapshot_shares_session_lock_with_existing_operations(
+    tmp_path, operation
+):
+    runner, host, state = await fake_camera(login_delay=0.03)
+    try:
+        client = ReolinkIsp(host, "admin", PASSWORD, LOG, scheme="http")
+        other = (
+            client.apply({"brightness": 50})
+            if operation == "apply"
+            else client.reboot()
+        )
+        snapshot, result = await asyncio.wait_for(
+            asyncio.gather(client.snapshot(tmp_path / "screen.jpg"), other),
+            timeout=3,
+        )
+        assert snapshot is True
+        assert state == {"logins": 1, "snaps": 1}
+        if operation == "apply":
+            assert client._applied == {"brightness": 50}
+        else:
+            assert result is True
+            assert client._token is None
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize(
+    "status,body",
+    [
+        (503, f"Camera unavailable: {PASSWORD}, tok1".encode()),
+        (403, b"Permission denied"),
+        (200, json.dumps([{"code": 1, "error": {"rspCode": -3}}]).encode()),
+        (200, b"<html>Camera is busy</html>"),
+        (503, JPEG),
+    ],
+)
+async def test_non_auth_snapshot_failure_preserves_session_and_last_image(
+    tmp_path, caplog, status, body
+):
+    runner, host, state = await fake_camera(snapshot_status=status, snapshot_body=body)
+    try:
+        client = ReolinkIsp(host, "admin", PASSWORD, LOG, scheme="http")
+        dst = tmp_path / "screen.jpg"
+        previous = JPEG + b"previous"
+        dst.write_bytes(previous)
+        with caplog.at_level("WARNING"):
+            assert await client.snapshot(dst) is False
+        assert state == {"logins": 1, "snaps": 1}
+        assert client._token == "tok1"
+        assert dst.read_bytes() == previous
+        assert "Reolink snapshot failed" in caplog.text
+        assert PASSWORD not in caplog.text and "tok1" not in caplog.text
+        assert await client.snapshot(dst) is False
+        assert state == {"logins": 1, "snaps": 2}
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize("response", ["json-list", "json-object", "http401"])
+async def test_snapshot_refreshes_only_for_explicit_auth_failures(tmp_path, response):
+    runner, host, state = await fake_camera(
+        expire_first_token=True, expired_token_response=response
+    )
+    try:
+        client = ReolinkIsp(host, "admin", PASSWORD, LOG, scheme="http")
+        dst = tmp_path / "screen.jpg"
+        assert await client.snapshot(dst) is True
+        assert dst.read_bytes() == JPEG
+        assert state == {"logins": 2, "snaps": 2}
+    finally:
+        await runner.cleanup()
+
+
+async def test_persistent_auth_failure_refreshes_once(tmp_path):
+    runner, host, state = await fake_camera(
+        snapshot_status=401, snapshot_body=b"Unauthorized"
+    )
+    try:
+        client = ReolinkIsp(host, "admin", PASSWORD, LOG, scheme="http")
+        assert await client.snapshot(tmp_path / "screen.jpg") is False
+        assert state == {"logins": 2, "snaps": 2}
+        assert client._token is None
+    finally:
+        await runner.cleanup()
