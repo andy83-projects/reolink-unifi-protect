@@ -148,7 +148,8 @@ The full, generated list is in [docs/FLAGS.md](docs/FLAGS.md); the main ones are
 | Flag | Purpose |
 |---|---|
 | `--hi-codec h265`, `--hi-width/height/fps` | Honest per-channel advertisement for video1 (upstream hardcodes h264) |
-| `--lo-codec`, `--lo-h265-transcode`, `--lo-width/height/fps` | Same for video2/3, with optional QSV HEVC transcode of an H.264 sub stream |
+| `--lo-codec`, `--lo-h265-transcode`, `--lo-width/height/fps` | Same for video2/3, with optional hardware HEVC transcode of a sub stream |
+| `--hw-backend vaapi`, `--hw-device`, `--hw-transcode` | Opt-in AMD/Mesa VA-API encoding; Intel QSV remains the default backend. See [AMD GPU setup](docs/AMD-VAAPI.md) for container, codec, and Kubernetes requirements |
 | `--sysid`, `--platform`, `--fw-build` | Full camera identity (e.g. `0xa598` / `sav837gw` = UVC G5 Pro) — required for Protect ≥ 3.x model recognition and the H.265 capability gate |
 | `--reolink-ai-host/-user/-password` | HTTPS `GetAiState` poller: typed detections even without the sidecar |
 | `--ai-sink-port` | HTTP endpoint where a standalone Baichuan sidecar posts real per-object boxes (with `--ai-sidecar` it defaults to loopback port 8099) |
