@@ -181,3 +181,50 @@ async def test_driver_override_is_optional_and_local_to_pipeline(driver, monkeyp
 
     assert environments[0]["LIBVA_DRIVER_NAME"] == (driver or "inherited")
     assert os.environ["LIBVA_DRIVER_NAME"] == "inherited"
+
+
+@pytest.mark.parametrize("camera_type", [RTSPCam, Reolink])
+@pytest.mark.parametrize("backend", ["qsv", "vaapi"])
+@pytest.mark.parametrize("transcoding", [False, True])
+def test_no_audio_all_sources_and_channels(camera_type, backend, transcoding):
+    options = ["--no-audio", "--hw-backend", backend]
+    if transcoding:
+        options += ["--hw-transcode", "--lo-h265-transcode"]
+    cam = make_cam(*options, camera_type=camera_type)
+    for stream in ("video1", "video2", "video3"):
+        assert shlex.split(cam.get_extra_ffmpeg_args(stream))[-1] == "-an"
+
+
+@pytest.mark.parametrize("backend", ["qsv", "vaapi"])
+@pytest.mark.parametrize("scaling", [False, True])
+def test_lower_audio_override_and_scaling_preserve_main(backend, scaling):
+    options = [
+        "--hw-backend",
+        backend,
+        "--lo-h265-transcode",
+        "--lo-width",
+        "640",
+        "--lo-height",
+        "480",
+        "--lo-audio-args=-ar 16000 -ac 1 -c:a aac -b:a 32k",
+        "--ffmpeg-args=-c:v copy -c:a copy",
+    ]
+    if scaling:
+        options += ["--lo-scale"]
+    cam = make_cam(*options)
+    for stream in ("video2", "video3"):
+        argv = shlex.split(cam.get_extra_ffmpeg_args(stream))
+        assert argv[argv.index("-c:a") + 1] == "aac"
+        if scaling:
+            assert "w=640:h=480" in argv[argv.index("-vf") + 1]
+        elif backend == "vaapi":
+            assert argv[argv.index("-vf") + 1] == "scale_vaapi=format=nv12"
+        else:
+            assert "-vf" not in argv
+    assert cam.get_extra_ffmpeg_args("video1") == "-c:v copy -c:a copy"
+
+
+def test_lower_audio_and_scaling_do_not_enable_transcoding():
+    cam = make_cam("--lo-scale", "--lo-audio-args=-an")
+    for stream in ("video1", "video2", "video3"):
+        assert cam.get_extra_ffmpeg_args(stream) == cam.args.ffmpeg_args

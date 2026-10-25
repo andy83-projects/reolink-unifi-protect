@@ -27,6 +27,10 @@ Every option of the `rtsp` source, generated from the argument parser. **New** m
 | `--lo-fps` | `15` |  |  |
 | `--lo-h265-transcode` | off |  | Hardware-transcode the medium/low channels to H.265 using --hw-backend |
 | `--lo-transcode-bitrate` | `1M` |  | Bitrate for --lo-h265-transcode |
+| `--lo-scale` | off | **New** | Scale lower hardware-transcoded channels with Intel QSV or VA-API. Requires `--lo-h265-transcode`; a shared relay provides one upstream connection. |
+| `--lo-audio-args` | backend default | **New** | Audio override for lower H.265 transcodes only; QSV defaults to copy, VA-API to AAC 16k mono. See runtime migration guide for FFmpeg 7. |
+| `--vaapi-driver` | auto | **New** | Optional libva driver override, e.g. `iHD` or `radeonsi`; does not enable encoding. |
+| `--no-audio` | off | **New** | Send video only on every channel (for cameras whose audio timestamps stall the FLV muxer) |
 | `--source`, `-s` |  |  | Source(s) for up to three streams in order of descending quality |
 | `--http-api` | `0` |  | Specify a port number to enable the HTTP API (default: disabled) |
 | `--snapshot-url`, `-i` |  |  | HTTP endpoint to fetch snapshot image from |

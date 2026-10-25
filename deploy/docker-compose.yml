@@ -123,6 +123,8 @@ services:
       - --lo-codec
       - h265
       - --lo-h265-transcode
+      - --lo-audio-args
+      - "-ar 16000 -ac 1 -c:a aac -b:a 32k"
       - --lo-width
       - "1920"
       - --lo-height

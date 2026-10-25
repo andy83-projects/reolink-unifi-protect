@@ -211,6 +211,25 @@ class UnifiCamBase(metaclass=ABCMeta):
             help="Bitrate for --lo-h265-transcode",
         )
 
+        parser.add_argument(
+            "--lo-audio-args",
+            default=None,
+            help="Audio args for --lo-h265-transcode only; default: QSV copy, "
+            "VA-API AAC 16k mono. For FFmpeg 7 use '-ar 16000 -ac 1 -c:a aac -b:a 32k'",
+        )
+        parser.add_argument(
+            "--no-audio",
+            action="store_true",
+            help="Disable audio on every channel, including the reolink source",
+        )
+        parser.add_argument(
+            "--lo-scale",
+            action="store_true",
+            help="With --lo-h265-transcode, scale lower channels to --lo-width x "
+            "--lo-height using Intel QSV or VA-API (--hw-backend). A shared relay "
+            "is required to consolidate upstream camera connections",
+        )
+
     async def _run(self, ws) -> None:
         self._session = ws
         await self.init_adoption()
@@ -308,15 +327,28 @@ class UnifiCamBase(metaclass=ABCMeta):
         )
 
     def get_extra_ffmpeg_args(self, stream_index: str = "") -> str:
+        args = self._extra_ffmpeg_args(stream_index)
+        if getattr(self.args, "no_audio", False):
+            args += " -an"
+        return args
+
+    def _extra_ffmpeg_args(self, stream_index: str = "") -> str:
         if self._hw_backend() == "vaapi":
             if self._lo_h265_transcoding(stream_index):
                 # Keep the substream's size; normalize 10-bit input to the
                 # 8-bit surfaces used by the HEVC Main encoder.
                 lo_fps = getattr(self.args, "lo_fps", None) or 30
+                size = (
+                    f"w={self.args.lo_width}:h={self.args.lo_height}:"
+                    if getattr(self.args, "lo_scale", False)
+                    else ""
+                )
+                audio = getattr(self.args, "lo_audio_args", None) or (
+                    "-ar 16000 -ac 1 -codec:a aac -b:a 32k"
+                )
                 return (
-                    '-vf "scale_vaapi=format=nv12" -c:v hevc_vaapi'
-                    f" -b:v {self.args.lo_transcode_bitrate} -g {lo_fps} -bf 0"
-                    " -ar 16000 -ac 1 -codec:a aac -b:a 32k"
+                    f'-vf "scale_vaapi={size}format=nv12" -c:v hevc_vaapi'
+                    f" -b:v {self.args.lo_transcode_bitrate} -g {lo_fps} -bf 0 {audio}"
                 )
             if self._hw_transcoding(stream_index):
                 hi_fps = getattr(self.args, "hi_fps", None) or 30
@@ -328,16 +360,21 @@ class UnifiCamBase(metaclass=ABCMeta):
                     " -ar 16000 -ac 1 -codec:a aac -b:a 32k"
                 )
         if self._lo_h265_transcoding(stream_index):
-            # Same dimensions in and out — no scaler, decode straight
-            # into hevc_qsv on the iGPU.
+            # Scaling is opt-in; a relay, not the scaler, shares camera sessions.
             # -g = 1s keyframe cadence: hevc_qsv's default GOP is many
             # seconds long, which forced Protect's thumbnailer to decode
             # 8+s of video per event thumb (10-25s, queueing) — the app
             # then falls back to a stale full-frame snapshot.
             lo_fps = getattr(self.args, "lo_fps", None) or 30
+            scale = (
+                f'-vf "vpp_qsv=w={self.args.lo_width}:h={self.args.lo_height}" '
+                if getattr(self.args, "lo_scale", False)
+                else ""
+            )
+            audio = getattr(self.args, "lo_audio_args", None) or "-c:a copy"
             return (
-                f"-c:v hevc_qsv -b:v {self.args.lo_transcode_bitrate}"
-                f" -g {lo_fps} -c:a copy"
+                f"{scale}-c:v hevc_qsv -b:v {self.args.lo_transcode_bitrate}"
+                f" -g {lo_fps} {audio}"
             )
         # Post-input (encode) slot: scale + encode H.264, both on the iGPU.
         if self._hw_transcoding(stream_index):
