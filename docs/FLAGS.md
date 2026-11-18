@@ -4,6 +4,8 @@ Every option of the `rtsp` source, generated from the argument parser. **New** m
 ([woutersteegers/reolink-unifi-protect](https://github.com/woutersteegers/reolink-unifi-protect)). Pass them after the `rtsp` subcommand:
 `unifi-cam-proxy --host … --mac … --cert … --token … rtsp -s <url> [options]`. Identity flags (`--sysid`, `--platform`,
 `--fw-version`, `--fw-build`, `--name`, `--ip`) are top-level and come before `rtsp`; see the README quickstart.
+`--fw-state-file <path>` (top-level too) saves the firmware version adopted from Protect's update pushes and reads it back at
+startup when it is newer than `--fw-version`, so a restart doesn't drop the camera back and re-trigger the update offer.
 
 ## Streams, codecs and transcoding
 

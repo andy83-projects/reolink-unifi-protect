@@ -35,6 +35,8 @@ services:
       - LIBVA_DRIVER_NAME=iHD
     volumes:
       - ./client.pem:/client.pem:ro
+      # Persistent state (firmware version adopted from Protect's pushes).
+      - ./state:/state
       # Scratch space (motion snapshots, per-object crops) on a bounded
       # tmpfs: the app now cleans up after itself, but a regression must
       # never again fill the host's docker.img, and a restart wipes it.
@@ -80,10 +82,12 @@ services:
       # for sav837gw: https://fw-update.ui.com/api/firmware-latest?filter=eq~~platform~~sav837gw&filter=eq~~product~~uvc
       # fw-build is still 5.4.122's: newer headers are obfuscated, so the
       # real build string is unknown. A pushed newer release is adopted
-      # in memory (process_upgrade) until the next restart; bump this
-      # to stop the nightly push.
+      # live (no restart) and saved to --fw-state-file, which wins over
+      # this flag at startup while it is newer; this is only the floor.
       - --fw-version
       - "5.5.45"
+      - --fw-state-file
+      - /state/fw-version.json
       - --fw-build
       - "92ebf37.260724.1639"
       - rtsp

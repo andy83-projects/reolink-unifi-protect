@@ -172,6 +172,7 @@ The full, generated list is in [docs/FLAGS.md](docs/FLAGS.md); the main ones are
 | `--lo-codec`, `--lo-h265-transcode`, `--lo-width/height/fps` | Same for video2/3, with optional hardware HEVC transcode of a sub stream |
 | `--hw-backend vaapi`, `--hw-device`, `--hw-transcode` | Opt-in AMD/Mesa VA-API encoding; Intel QSV remains the default backend. See [AMD GPU setup](docs/AMD-VAAPI.md) for container, codec, and Kubernetes requirements |
 | `--sysid`, `--platform`, `--fw-build` | Full camera identity (e.g. `0xa598` / `sav837gw` = UVC G5 Pro) — required for Protect ≥ 3.x model recognition and the H.265 capability gate |
+| `--fw-state-file` | JSON file that keeps the firmware version adopted from Protect's update pushes across restarts, so Protect stops re-offering the update after every restart. Put it on a volume |
 | `--reolink-ai-host/-user/-password` | HTTPS `GetAiState` poller: typed detections even without the sidecar |
 | `--ai-sink-port` | HTTP endpoint where a standalone Baichuan sidecar posts real per-object boxes (with `--ai-sidecar` it defaults to loopback port 8099) |
 | `--ai-min-confidence`, `--ai-confidence-overrides` | Confidence gates for *starting* an event from boxes, globally and per class (e.g. `animal=0.6`). Not applied in on-demand `--ai-sidecar` mode, where the camera's own push detection starts the event and boxes only decorate it (20% floor) |

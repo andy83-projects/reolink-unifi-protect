@@ -10,6 +10,7 @@ import coloredlogs
 # Python 3.12+; uiprotect is the maintained drop-in (same ProtectApiClient).
 from uiprotect import ProtectApiClient
 
+from unifi import fw_state
 from unifi.cams import (
     DahuaCam,
     FrigateCam,
@@ -126,6 +127,12 @@ def parse_args():
         help="firmwareBuild string (e.g. 148b9a3.260612.645)",
     )
     parser.add_argument(
+        "--fw-state-file",
+        default=None,
+        help="JSON file that remembers the firmware version adopted from"
+        " Protect's update pushes across restarts (put it on a volume)",
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true", help="increase output verbosity"
     )
 
@@ -184,6 +191,14 @@ async def run():
     if not args.token:
         logger.error("A valid token is required")
         sys.exit(1)
+
+    if args.fw_state_file:
+        args.fw_version = fw_state.load(
+            args.fw_state_file,
+            args.fw_version,
+            short_form=bool(args.sysid),
+            logger=class_logger,
+        )
 
     cam = klass(args, logger)
     c = Core(args, cam, core_logger)

@@ -24,6 +24,7 @@ import aiohttp
 import packaging
 import websockets
 
+from unifi import fw_state
 from unifi.core import RetryableError
 from unifi.hw_check import check_hw
 
@@ -1033,6 +1034,9 @@ class UnifiCamBase(metaclass=ABCMeta):
             f"Pretending to upgrade firmware {self.args.fw_version} -> {version}"
         )
         self.args.fw_version = version
+        state_file = getattr(self.args, "fw_state_file", None)
+        if state_file:
+            fw_state.save(state_file, version, self.logger)
 
     async def process_isp_settings(self, msg: AVClientRequest) -> AVClientResponse:
         payload = {
