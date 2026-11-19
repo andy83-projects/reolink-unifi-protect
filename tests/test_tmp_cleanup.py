@@ -122,6 +122,45 @@ async def test_motion_snapshots_do_not_accumulate(cam, scratch):
     assert cam._motion_snapshot is not None and cam._motion_snapshot.exists()
 
 
+async def test_failed_capture_does_not_attach_previous_event_frame(cam, monkeypatch):
+    await cam.trigger_motion_start(SmartDetectObjectType.PERSON)
+    await cam.trigger_motion_stop()
+
+    async def unavailable():
+        raise FileNotFoundError("camera unavailable")
+
+    monkeypatch.setattr(cam, "get_snapshot", unavailable)
+    await cam.trigger_motion_start(SmartDetectObjectType.PERSON)
+    assert cam._motion_snapshot is None
+    assert cam._stage_full_fov() == {}
+
+
+async def test_slow_crop_does_not_attach_to_the_next_event(cam, monkeypatch):
+    await cam.trigger_motion_start(SmartDetectObjectType.PERSON)
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    class Proc:
+        returncode = 0
+
+        async def wait(self):
+            started.set()
+            await finish.wait()
+            return 0
+
+    async def exec_(*argv, **kwargs):
+        Path(argv[-1]).write_bytes(FAKE_JPEG)
+        return Proc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", exec_)
+    crop = asyncio.create_task(cam._make_object_crop(1, "person", BOX))
+    await started.wait()
+    await cam.trigger_motion_stop()
+    await cam.trigger_motion_start(SmartDetectObjectType.PERSON)
+    finish.set()
+    await crop
+    assert cam._smart_snapshots == []
+
+
 async def test_crop_source_frame_removed_after_crop(cam, fake_ffmpeg):
     cam._motion_event_ts = time.time()
     await cam._make_object_crop(1, "person", BOX)

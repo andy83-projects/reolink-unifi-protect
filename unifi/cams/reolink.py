@@ -70,7 +70,8 @@ class Reolink(UnifiCamBase):
             f"&password={self.args.password}"
         )
         self.logger.info(f"Grabbing snapshot: {url}")
-        await self.fetch_to_file(url, img_file)
+        if not await self.fetch_to_file(url, img_file):
+            raise FileNotFoundError("No fresh camera snapshot available")
         return img_file
 
     async def run(self) -> None:

@@ -2,7 +2,6 @@ import argparse
 import asyncio
 import logging
 import os
-import shlex
 import subprocess
 import tempfile
 import time
@@ -20,6 +19,7 @@ from unifi.reolink_ptz import ReolinkPtz
 
 
 class RTSPCam(UnifiCamBase):
+    SNAPSHOT_MAX_AGE_SEC = 5
     AI_CLEAR_AFTER_SEC = 2.5
     REBOOT_COOLDOWN_SEC = 300
     # Movement-gate tracker: boxes must displace before they count.
@@ -274,18 +274,51 @@ class RTSPCam(UnifiCamBase):
         )
 
     def start_snapshot_stream(self) -> None:
+        img_file = Path(self.snapshot_dir, "screen.jpg")
+        if self.snapshot_stream and self.snapshot_stream.poll() is None:
+            try:
+                stalled = (
+                    time.time() - img_file.stat().st_mtime > self.SNAPSHOT_MAX_AGE_SEC
+                )
+            except FileNotFoundError:
+                stalled = (
+                    time.monotonic()
+                    - getattr(self, "_snapshot_stream_started", time.monotonic())
+                    > 10
+                )
+            if stalled:
+                self.logger.warning("Snapshot stream stalled; restarting capture")
+                self.snapshot_stream.kill()
+                self.snapshot_stream.wait(timeout=2)
+                self.snapshot_stream = None
         if not self.snapshot_stream or self.snapshot_stream.poll() is not None:
-            cmd = (
-                f"ffmpeg -nostdin -y -re -rtsp_transport {self.args.rtsp_transport} "
-                f"-i {shlex.quote(self.args.source[-1])} "
-                "-r 1 "
-                f"-update 1 {self.snapshot_dir}/screen.jpg"
-            )
+            # Never serve the last frame of a dead capture process while it reconnects.
+            img_file.unlink(missing_ok=True)
+            cmd = [
+                "ffmpeg",
+                "-nostdin",
+                "-y",
+                "-re",
+                "-rtsp_transport",
+                self.args.rtsp_transport,
+                "-rw_timeout",
+                "10000000",
+                "-i",
+                self.args.source[-1],
+                "-r",
+                "1",
+                "-update",
+                "1",
+                "-atomic_writing",
+                "1",
+                str(img_file),
+            ]
             # Keep credential-bearing shell commands out of startup logs.
             self.logger.info("Spawning stream for snapshots")
             self.snapshot_stream = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
+            self._snapshot_stream_started = time.monotonic()
 
     def _reolink_snapshots(self) -> bool:
         return bool(
@@ -310,9 +343,17 @@ class RTSPCam(UnifiCamBase):
     async def get_snapshot(self) -> Path:
         img_file = Path(self.snapshot_dir, "screen.jpg")
         if self._http_snapshots():
-            await self._fetch_snapshot(img_file)
+            if not await self._fetch_snapshot(img_file):
+                # The file may still contain a previous request's frame.
+                raise FileNotFoundError("No fresh camera snapshot available")
         else:
             self.start_snapshot_stream()
+            for _ in range(25):
+                if img_file.exists():
+                    break
+                await asyncio.sleep(0.2)
+            if not img_file.exists():
+                raise FileNotFoundError("No fresh camera snapshot available")
         return img_file
 
     async def run(self) -> None:
@@ -716,6 +757,7 @@ class RTSPCam(UnifiCamBase):
         crop is square (Protect's isRealCropped requires it) and padded
         around the box so the subject has context.
         """
+        event_id = self._motion_event_id
         fetched = Path(self.snapshot_dir, f"crop_src_{tracker_id}.jpg")
         try:
             if self._http_snapshots():
@@ -765,7 +807,7 @@ class RTSPCam(UnifiCamBase):
                 return
             self._smart_snapshot_files[fname] = out
             self.prune_stale_crops()
-            if not self._motion_event_ts:
+            if not self._motion_event_ts or self._motion_event_id != event_id:
                 # Event already ended; the stop payload went out without
                 # this crop and appending now would pollute the next one.
                 return

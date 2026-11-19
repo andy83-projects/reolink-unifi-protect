@@ -563,6 +563,8 @@ class UnifiCamBase(metaclass=ABCMeta):
         descriptors: Optional[list] = None,
     ) -> None:
         if not self._motion_event_ts:
+            # A failed capture must not leave the previous event's frame attached.
+            self._motion_snapshot = None
             payload: dict[str, Any] = {
                 # Real wall/monotonic clocks: Protect timestamps each
                 # descriptor sample off clockBestWall when persisting
@@ -1642,10 +1644,16 @@ class UnifiCamBase(metaclass=ABCMeta):
         if filename and filename in self._smart_snapshot_files:
             # Per-object crop announced in smartDetectSnapshots.
             path = self._smart_snapshot_files[filename]
+        elif filename and filename.startswith(("detect_", "fullfov_")):
+            # An expired event image cannot be replaced with today's live view.
+            path = None
         elif snapshot_type in ["motionSnapshot", "smartDetectZoneSnapshot"]:
             path = self._motion_snapshot
         else:
-            path = await self.get_snapshot()
+            try:
+                path = await self.get_snapshot()
+            except FileNotFoundError:
+                path = None
             # The capture process this starts (or restarts) takes a moment to produce
             # its first frame. A request landing right after adoption/reconnect, before
             # that frame exists, used to fail outright with no retry; wait briefly for it

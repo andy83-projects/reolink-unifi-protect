@@ -30,7 +30,8 @@ class ReolinkNVRCam(UnifiCamBase):
             f"/api.cgi?cmd=Snap&user={self.args.username}&password={self.args.password}"
             f"&rs=6PHVjvf0UntSLbyT&channel={self.args.channel}"
         )
-        await self.fetch_to_file(url, img_file)
+        if not await self.fetch_to_file(url, img_file):
+            raise FileNotFoundError("No fresh camera snapshot available")
         return img_file
 
     async def run(self) -> None:

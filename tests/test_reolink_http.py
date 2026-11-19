@@ -171,6 +171,25 @@ def test_plain_cameras_keep_the_rtsp_snapshot_stream(tmp_path):
     assert make_cam(tmp_path, snapshot_url="http://cam/snap")._http_snapshots()
 
 
+@pytest.mark.parametrize("token_login", [False, True])
+async def test_failed_snapshot_does_not_return_an_old_frame(tmp_path, token_login):
+    cam = make_cam(
+        tmp_path,
+        reolink_snapshot=token_login,
+        snapshot_url=None if token_login else "http://cam/snap",
+    )
+    old = tmp_path / "screen.jpg"
+    old.write_bytes(JPEG)
+
+    async def failed_fetch(dst):
+        return False
+
+    cam._fetch_snapshot = failed_fetch
+    with pytest.raises(FileNotFoundError, match="fresh camera snapshot"):
+        await cam.get_snapshot()
+    assert old.read_bytes() == JPEG
+
+
 def test_api_url_follows_the_scheme(tmp_path):
     url = make_cam(tmp_path, reolink_scheme="http")._reolink_api_url("GetAiState")
     assert url.startswith("http://192.0.2.10/cgi-bin/api.cgi?")

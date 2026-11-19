@@ -108,7 +108,7 @@ def test_snapshot_stream_quotes_source_without_logging_it(
     monkeypatch.setattr("unifi.cams.rtsp.subprocess.Popen", FakePopen)
     with caplog.at_level(logging.INFO):
         cam.start_snapshot_stream()
-    argv = shlex.split(spawned[0])
+    argv = spawned[0]
     assert argv[argv.index("-i") + 1] == source_url
     assert "Spawning stream for snapshots" in caplog.text
     assert password not in caplog.text

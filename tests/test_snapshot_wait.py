@@ -86,3 +86,28 @@ def test_network_guard_blocks_real_upload_targets(tmp_path):
 
     with pytest.raises(AssertionError, match="192.0.2.156"):
         asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("filename", ["detect_42.jpg", "fullfov_42.jpg"])
+async def test_missing_event_image_never_fetches_live_view(tmp_path, filename, caplog):
+    cam = make_cam(tmp_path / "screen.jpg")
+
+    async def unexpected_live_view():
+        raise AssertionError("event image must not fall back to live view")
+
+    cam.get_snapshot = unexpected_live_view
+    request = msg()
+    request["payload"]["filename"] = filename
+    await cam.process_snapshot_request(request)
+    assert "skipping upload" in caplog.text
+
+
+async def test_failed_live_fetch_skips_upload(tmp_path, caplog):
+    cam = make_cam(tmp_path / "screen.jpg")
+
+    async def unavailable():
+        raise FileNotFoundError("no fresh frame")
+
+    cam.get_snapshot = unavailable
+    await cam.process_snapshot_request(msg())
+    assert "skipping upload" in caplog.text
