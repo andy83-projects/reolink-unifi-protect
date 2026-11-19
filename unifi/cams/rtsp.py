@@ -301,7 +301,7 @@ class RTSPCam(UnifiCamBase):
                 "-re",
                 "-rtsp_transport",
                 self.args.rtsp_transport,
-                "-rw_timeout",
+                "-timeout",
                 "10000000",
                 "-i",
                 self.args.source[-1],

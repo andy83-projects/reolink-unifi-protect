@@ -54,7 +54,7 @@ async def test_stale_frame_is_replaced_before_returning(tmp_path, monkeypatch, d
     def spawn(argv, **kwargs):
         assert not frame.exists()
         assert not kwargs.get("shell")
-        assert "-rw_timeout" in argv
+        assert "-timeout" in argv
         assert "-atomic_writing" in argv
         writers.append(asyncio.create_task(fresh_frame()))
         return Capture()
