@@ -197,6 +197,20 @@ class UnifiCamBase(metaclass=ABCMeta):
         parser.add_argument("--lo-width", default=1280, type=int)
         parser.add_argument("--lo-height", default=720, type=int)
         parser.add_argument("--lo-fps", default=15, type=int)
+        parser.add_argument(
+            "--trailer-clock",
+            default="wall",
+            choices=["wall", "media"],
+            help="clock_sync trailer source: pipe-read wall clock (default) or "
+            "the FLV tags' media timestamps (smooth RTP pacing for RTSP clients)",
+        )
+        parser.add_argument(
+            "--audio-trailer-clock",
+            default=11025,
+            type=int,
+            help="clock_sync audio trailer clock rate in Hz; set to the AAC "
+            "sample rate (e.g. 16000) for correct audio RTP timestamps",
+        )
         # With camera-level videoCodec=h265 (enhanced encoding) Protect
         # expects EVERY channel to carry HEVC and skips H.264 segments
         # (msr: "TranscodeSegment codec mismatch"). This QSV-encodes the
@@ -1956,6 +1970,15 @@ class UnifiCamBase(metaclass=ABCMeta):
                 prefix = f"-hwaccel qsv -qsv_device {device} "
         return prefix + " ".join(base_args)
 
+    def _trailer_clock_arg(self) -> str:
+        arg = ""
+        if getattr(self.args, "trailer_clock", "wall") == "media":
+            arg += " --trailer-clock media"
+        rate = getattr(self.args, "audio_trailer_clock", 11025) or 11025
+        if int(rate) != 11025:
+            arg += f" --audio-clock {int(rate)}"
+        return arg
+
     async def start_video_stream(
         self, stream_index: str, stream_name: str, destination: tuple[str, int]
     ):
@@ -1977,7 +2000,8 @@ class UnifiCamBase(metaclass=ABCMeta):
                 f" {self.get_extra_ffmpeg_args(stream_index)} -metadata"
                 f" streamName={stream_name} -f flv - | {hevc_filter}{sys.executable} -m"
                 " unifi.clock_sync"
-                f" {'--write-timestamps' if self._needs_flv_timestamps else ''} | nc"
+                f" {'--write-timestamps' if self._needs_flv_timestamps else ''}"
+                f"{self._trailer_clock_arg()} | nc"
                 f" {destination[0]} {destination[1]}"
             )
 
