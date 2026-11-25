@@ -103,7 +103,11 @@ def test_media_mode_smooths_bursty_arrival(monkeypatch):
     assert all(38 <= x <= 42 for x in g), (min(g), max(g))
     assert "resync" not in log
     # Wall mode on the same input: the defect this fixes.
-    gw = gaps_ms(video_secs(run([(VIDEO, 40 * k) for k in range(n)], bursty(n), "wall", monkeypatch)[0]))
+    gw = gaps_ms(
+        video_secs(
+            run([(VIDEO, 40 * k) for k in range(n)], bursty(n), "wall", monkeypatch)[0]
+        )
+    )
     assert sum(x == 0 for x in gw) > 500 and max(gw) > 200
 
 
@@ -142,7 +146,12 @@ def test_media_startup_burst_drains_without_resync(monkeypatch):
 
 def test_media_timestamp_wrap(monkeypatch):
     base = 2**32 - 400
-    res, log = run([(VIDEO, base + 40 * k) for k in range(30)], [k * 0.04 for k in range(30)], "media", monkeypatch)
+    res, log = run(
+        [(VIDEO, base + 40 * k) for k in range(30)],
+        [k * 0.04 for k in range(30)],
+        "media",
+        monkeypatch,
+    )
     assert all(abs(x - 40) < 0.5 for x in gaps_ms(video_secs(res)))
     assert log == ""
 
@@ -205,7 +214,9 @@ def test_mediaclock_discontinuity_reanchors(monkeypatch):
 
 def av_tags(n):
     """25 fps video + 16 kHz AAC (1024 samples = 64 ms) in real time."""
-    tags = [(VIDEO, 40 * k) for k in range(n)] + [(AUDIO, 64 * j) for j in range(n * 40 // 64)]
+    tags = [(VIDEO, 40 * k) for k in range(n)] + [
+        (AUDIO, 64 * j) for j in range(n * 40 // 64)
+    ]
     tags.sort(key=lambda t: (t[1], t[0]))
     return tags, [t / 1000 for _, t in tags]
 
